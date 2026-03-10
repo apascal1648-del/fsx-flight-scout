@@ -13,6 +13,7 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
+app.use(express.static(__dirname));
 
 // ── Browser singleton (reused across requests) ──────────────────────────────
 let browser = null;
