@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static(__dirname));
+app.get('/app', (req, res) => res.sendFile(require('path').join(__dirname, 'FSX-standalone.html')));
 
 // ── Browser singleton (reused across requests) ──────────────────────────────
 let browser = null;
