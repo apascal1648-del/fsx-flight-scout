@@ -4,18 +4,19 @@
  * Deploy free on Railway: railway.app
  */
 
-const express  = require('express');
-const cors     = require('cors');
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
 const { chromium } = require('playwright');
 
-const app  = express();
+const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
-app.use(require('express').static(require('path').join(__dirname)));
+app.use(express.static(path.join(__dirname)));
 
-// ── Browser singleton (reused across requests) ──────────────────────────────
+// ── Browser singleton ──────────────────────────────────────────────────────
 let browser = null;
 let launching = false;
 
@@ -63,7 +64,7 @@ function stayDays(dep, ret) {
 }
 
 async function scrapeRoute({ from, to, depart, ret, cabin, params }) {
-  const b   = await getBrowser();
+  const b = await getBrowser();
   const page = await b.newPage();
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
@@ -182,7 +183,7 @@ app.get('/scan', async (req, res) => {
   const { fromCode, toCode, depart, ret, cabin='Business' } = req.query;
   if (!depart||!ret) return res.status(400).json({ error: 'depart and ret required' });
   const origins = fromCode==='ALL'||!fromCode ? EU_HUBS : EU_HUBS.filter(h=>h.code===fromCode);
-  const dests   = toCode==='ALL'||!toCode ? AS_AIRPORTS : AS_AIRPORTS.filter(a=>a.code===toCode);
+  const dests = toCode==='ALL'||!toCode ? AS_AIRPORTS : AS_AIRPORTS.filter(a=>a.code===toCode);
   const all = [];
   for (const org of origins) {
     for (const dst of dests) {
@@ -200,6 +201,6 @@ app.get('/scan', async (req, res) => {
 });
 
 app.get('/health', (req, res) => res.json({ status: 'FSX scraper online', version: '1.0' }));
-app.get('/', (req, res) => res.sendFile(__dirname + '/index.html'));
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'FSX-standalone.html')));
 
 app.listen(PORT, () => console.log('[FSX] Server running on port ' + PORT));
