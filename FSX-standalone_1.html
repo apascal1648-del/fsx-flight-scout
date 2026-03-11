@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FSX — Flight Scout</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,900;1,700&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { min-height: 100%; }
+    body { background: #0a0a0a; color: #f0ede4; font-family: 'DM Sans', sans-serif; font-size: 16px; line-height: 1.5; overflow-x: hidden; }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: #111; }
+    ::-webkit-scrollbar-thumb { background: #c8a84b; border-radius: 3px; }
+
+    @keyframes fadeUp  { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
+    @keyframes pulse   { 0%,100%{opacity:1} 50%{opacity:.35} }
+    @keyframes spin    { from{transform:rotate(0)} to{transform:rotate(360deg)} }
+    @keyframes slideIn { from{opacity:0;transform:translateX(-8px)} to{opacity:1;transform:translateX(0)} }
+
+    .ticket-card {
+      background: #141414;
+      border: 1px solid #2a2a2a;
+      border-left: 4px solid #c8a84b;
+      border-radius: 4px;
+      padding: 20px 24px;
+      transition: box-shadow .2s, border-left-color .2s, background .2s;
+      animation: fadeUp .4s ease both;
+      position: relative;
+    }
+    .ticket-card:hover { box-shadow: 0 4px 24px rgba(200,168,75,.12); border-left-color: #e8c86b; background: #181818; }
+    .ticket-card.best-card { border-left-color: #38c870; background: #0d1a10; }
+
+    .scan-btn {
+      background: linear-gradient(135deg,#c8a84b,#8a6a10);
+      color: #0a0a0a; border: none; border-radius: 4px;
+      padding: 16px 52px; font-size: 14px; font-weight: 700;
+      letter-spacing: 3px; text-transform: uppercase; cursor: pointer;
+      transition: all .2s; font-family: 'DM Mono', monospace;
+    }
+    .scan-btn:hover:not(:disabled) { filter: brightness(1.15); transform: translateY(-1px); box-shadow: 0 6px 24px rgba(200,168,75,.35); }
+    .scan-btn:disabled { background: #222; color: #444; cursor: not-allowed; }
+
+    .key-input {
+      background: #1a1a1a; border: 1.5px solid #333;
+      border-radius: 4px; color: #f0ede4;
+      font-family: 'DM Mono', monospace;
+      font-size: 13px; padding: 11px 14px; width: 100%;
+      outline: none; transition: border-color .2s;
+    }
+    .key-input:focus { border-color: #c8a84b; }
+    .key-input::placeholder { color: #444; }
+
+    .key-btn {
+      background: linear-gradient(135deg,#c8a84b,#8a6a10); color: #0a0a0a;
+      border: none; border-radius: 4px;
+      padding: 11px 24px; font-weight: 700; font-size: 13px;
+      letter-spacing: 1px; text-transform: uppercase;
+      cursor: pointer; font-family: 'DM Mono', monospace;
+      white-space: nowrap; transition: all .2s;
+    }
+    .key-btn:hover { filter: brightness(1.12); }
+
+    .log-box {
+      background: #0d0d0d; border: 1px solid #1e1e1e;
+      border-radius: 4px; padding: 14px 16px; height: 110px;
+      overflow-y: auto; font-family: 'DM Mono', monospace; font-size: 11px;
+    }
+    .log-entry { animation: slideIn .3s ease; margin-bottom: 3px; line-height: 1.6; }
+
+    .progress-bar { height: 3px; background: #1e1e1e; border-radius: 2px; overflow: hidden; margin-bottom: 20px; }
+    .progress-fill { height: 100%; background: linear-gradient(to right,#8a6a10,#c8a84b,#e8c86b); transition: width .4s ease; box-shadow: 0 0 8px rgba(200,168,75,.5); }
+
+    .modal-overlay {
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,.88);
+      display: flex; align-items: center; justify-content: center;
+      animation: fadeIn .2s ease; padding: 20px;
+      backdrop-filter: blur(6px);
+    }
+    .modal-box {
+      background: #111; border: 1px solid #2a2a2a;
+      box-shadow: 0 24px 80px rgba(0,0,0,.8);
+      border-radius: 8px; padding: 40px 36px;
+      max-width: 480px; width: 100%;
+      animation: fadeUp .3s ease;
+    }
+
+    select {
+      appearance: none;
+      background: #1a1a1a url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23888' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 12px center;
+      border: 1.5px solid #2e2e2e; border-radius: 4px;
+      padding: 9px 36px 9px 12px; font-size: 14px;
+      font-family: 'DM Sans', sans-serif; color: #f0ede4;
+      cursor: pointer; outline: none; transition: border-color .2s;
+    }
+    select:focus { border-color: #c8a84b; }
+    select option { background: #1a1a1a; }
+
+    .search-box {
+      background: #111; border: 1px solid #1e1e1e;
+      border-radius: 6px; padding: 24px 28px; margin-bottom: 20px;
+    }
+
+    .chip {
+      display: inline-flex; align-items: center;
+      border-radius: 4px; padding: 5px 12px;
+      font-size: 11px; font-family: 'DM Mono', monospace;
+      cursor: pointer; transition: all .15s; white-space: nowrap;
+      letter-spacing: .5px; font-weight: 500; user-select: none;
+      border: 1.5px solid #2a2a2a; background: #161616; color: #555;
+    }
+    .chip.on { background: rgba(200,168,75,.15); border-color: #c8a84b; color: #e8c86b; font-weight: 700; }
+    .chip:hover { border-color: #555; color: #aaa; }
+    .chip.on:hover { border-color: #e8c86b; }
+
+    .section-div { height: 1px; background: #1e1e1e; margin: 18px 0; }
+
+    @media (max-width: 600px) {
+      .scan-btn { padding: 14px 28px; font-size: 13px; }
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+  const { useState, useEffect, useRef } = React;
+
+  const EU_HUB_LIST = [
+    {code:'ZRH',name:'Zurich'},{code:'FRA',name:'Frankfurt'},{code:'CDG',name:'Paris'},
+    {code:'LHR',name:'London'},{code:'AMS',name:'Amsterdam'},{code:'VIE',name:'Vienna'},
+    {code:'BCN',name:'Barcelona'},{code:'FCO',name:'Rome'},
+  ];
+  const AS_AIRPORT_LIST = [
+    {code:'NRT',name:'Tokyo'},{code:'ICN',name:'Seoul'},{code:'SIN',name:'Singapore'},
+    {code:'BKK',name:'Bangkok'},{code:'HKG',name:'Hong Kong'},{code:'KUL',name:'KL'},
+    {code:'PVG',name:'Shanghai'},{code:'HAN',name:'Hanoi'},{code:'SGN',name:'Ho Chi Minh'},
+    {code:'MNL',name:'Manila'},{code:'TPE',name:'Taipei'},{code:'CGK',name:'Jakarta'},
+  ];
+  const ALL_AIRLINES = [
+    {code:'QR',name:'Qatar Airways'},{code:'EK',name:'Emirates'},{code:'EY',name:'Etihad'},
+    {code:'TK',name:'Turkish'},{code:'SQ',name:'Singapore Air'},{code:'CX',name:'Cathay Pacific'},
+    {code:'LH',name:'Lufthansa'},{code:'LX',name:'SWISS'},{code:'AF',name:'Air France'},
+    {code:'KL',name:'KLM'},{code:'BA',name:'British Airways'},{code:'AY',name:'Finnair'},
+    {code:'TG',name:'Thai Airways'},{code:'NH',name:'ANA'},{code:'JL',name:'JAL'},
+    {code:'KE',name:'Korean Air'},{code:'MH',name:'Malaysia'},{code:'VN',name:'Vietnam Airlines'},
+    {code:'BR',name:'EVA Air'},{code:'CI',name:'China Airlines'},{code:'OZ',name:'Asiana'},
+    {code:'CA',name:'Air China'},{code:'CZ',name:'China Southern'},{code:'MU',name:'China Eastern'},
+    {code:'GA',name:'Garuda'},{code:'PR',name:'Philippine'},
+  ];
+
+  function makeMonthOpts() {
+    const opts = []; const now = new Date();
+    for (let i = 0; i <= 18; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth()+i, 1);
+      opts.push({ value:i, label:d.toLocaleString('en-US',{month:'long',year:'numeric'}),
+        yr:d.getFullYear(), month:d.getMonth() });
+    }
+    return opts;
+  }
+
+  // ── Server Modal ──────────────────────────────────────────────────────────
+  function ServerModal({ onSave, initUrl }) {
+    const [url, setUrl] = useState(initUrl||'http://localhost:3001');
+    const [err, setErr] = useState('');
+    const [testing, setTesting] = useState(false);
+
+    async function test() {
+      setTesting(true); setErr('');
+      try {
+        const r = await fetch(url.replace(/\/$/, '') + '/', { mode:'cors' });
+        const d = await r.json();
+        if (d.status) { onSave(url.replace(/\/$/, '')); }
+        else setErr('Unexpected response: ' + JSON.stringify(d));
+      } catch (e) {
+        setErr('Cannot reach server: ' + e.message);
+      }
+      setTesting(false);
+    }
+
+    return (
+      <div className="modal-overlay">
+        <div className="modal-box">
+          <div style={{fontSize:10,letterSpacing:5,color:'#c8a84b',textTransform:'uppercase',marginBottom:10,fontFamily:"'DM Mono',monospace"}}>FSX · Flight Scout</div>
+          <h2 style={{fontSize:26,fontWeight:900,fontFamily:"'Playfair Display',serif",color:'#f0ede4',marginBottom:16}}>Connect Scraper</h2>
+
+          <div style={{background:'rgba(200,168,75,.04)',border:'1px solid rgba(200,168,75,.15)',borderRadius:6,padding:'16px 18px',marginBottom:14}}>
+            <div style={{fontSize:10,letterSpacing:2,color:'#c8a84b',fontFamily:"'DM Mono',monospace",marginBottom:8}}>◆ FSX SCRAPER SERVER</div>
+            <p style={{color:'#666',fontSize:12,lineHeight:1.6,marginBottom:10}}>
+              Enter the URL of your FSX scraper (Railway, localhost, etc.). The scraper queries Google Flights directly — no API key needed.
+            </p>
+            <label style={{fontSize:10,letterSpacing:2,color:'#555',textTransform:'uppercase',display:'block',marginBottom:5,fontFamily:"'DM Mono',monospace"}}>SERVER URL</label>
+            <div style={{display:'flex',gap:8}}>
+              <input className="key-input" value={url} onChange={e=>{setUrl(e.target.value);setErr('');}}
+                placeholder="https://your-app.railway.app"
+                onKeyDown={e=>e.key==='Enter'&&test()} />
+              <button className="key-btn" onClick={test} disabled={testing}>
+                {testing ? '…' : 'TEST'}
+              </button>
+            </div>
+            {err && <div style={{color:'#e05555',fontSize:12,fontFamily:"'DM Mono',monospace",marginTop:8}}>{err}</div>}
+          </div>
+
+          <div style={{marginTop:14,padding:'12px 14px',background:'rgba(56,200,112,.04)',border:'1px solid rgba(56,200,112,.1)',borderRadius:6,fontSize:12,color:'#444',lineHeight:1.8,fontFamily:"'DM Mono',monospace"}}>
+            <span style={{color:'#38c870'}}>Local:</span> localhost:3001 &nbsp;·&nbsp;
+            <span style={{color:'#38c870'}}>Railway:</span> fsx-flight-scout-production.up.railway.app
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Ticket Card ──────────────────────────────────────────────────────────
+  function Card({ t, i }) {
+    return (
+      <div className={'ticket-card'+(t.best?' best-card':'')} style={{animationDelay:i*.06+'s'}}>
+        <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
+
+          {/* Rank */}
+          <div style={{fontSize:12,fontWeight:700,color:t.best?'#38c870':'#333',fontFamily:"'DM Mono',monospace",minWidth:26,flexShrink:0}}>
+            #{i+1}
+          </div>
+
+          {/* Route */}
+          <div style={{flex:'1 1 auto',minWidth:220}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <div>
+                <div style={{fontSize:22,fontWeight:700,fontFamily:"'Playfair Display',serif",lineHeight:1,color:'#f0ede4'}}>{t.from}</div>
+                <div style={{fontSize:10,color:'#555',fontFamily:"'DM Mono',monospace",letterSpacing:2,marginTop:2}}>{t.fromCode}</div>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'0 16px',flex:'1 1 160px'}}>
+                <div style={{fontSize:15,color:'#c8a84b',fontFamily:"'DM Mono',monospace",fontWeight:700,letterSpacing:1,marginBottom:6}}>{t.dur||''}</div>
+                <div style={{display:'flex',alignItems:'center',gap:0,width:'100%',marginBottom:6}}>
+                  <div style={{flex:1,height:1,background:'linear-gradient(to right,#2a2a2a,#555)'}}/>
+                  <span style={{fontSize:16,color:'#c8a84b',margin:'0 4px'}}>✈</span>
+                  <div style={{flex:1,height:1,background:'linear-gradient(to right,#555,#2a2a2a)'}}/>
+                </div>
+                <div style={{fontSize:11,color:t.stops===0?'#38c870':'#aaa',fontFamily:"'DM Mono',monospace",letterSpacing:2,fontWeight:600,marginBottom:t.via?8:0}}>
+                  {t.stops===0?'✦ DIRECT':t.stops+' STOP'+(t.stops>1?'S':'')}
+                </div>
+                {t.via && (
+                  <div style={{background:'rgba(200,168,75,.06)',border:'1px solid rgba(200,168,75,.12)',borderRadius:3,padding:'4px 12px',textAlign:'center',width:'100%'}}>
+                    <div style={{fontSize:11,color:'#d0cdc4',fontFamily:"'DM Mono',monospace",fontWeight:600,letterSpacing:.5}}>{t.via}</div>
+                  </div>
+                )}
+              </div>
+              <div>
+                <div style={{fontSize:22,fontWeight:700,fontFamily:"'Playfair Display',serif",lineHeight:1,color:'#f0ede4'}}>{t.to}</div>
+                <div style={{fontSize:10,color:'#555',fontFamily:"'DM Mono',monospace",letterSpacing:2,marginTop:2}}>{t.toCode}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Airline */}
+          <div style={{flex:'1 1 110px',minWidth:110}}>
+            <div style={{fontSize:13,fontWeight:600,color:'#d0cdc4'}}>{t.airline}</div>
+            <div style={{fontSize:10,color:'#444',fontFamily:"'DM Mono',monospace",marginTop:2,letterSpacing:1}}>AIRLINE</div>
+          </div>
+
+          {/* Dates + Stay */}
+          <div style={{flex:'1 1 210px',display:'flex',gap:14,flexWrap:'wrap'}}>
+            {t.dep && <div>
+              <div style={{fontSize:9,color:'#555',fontFamily:"'DM Mono',monospace",textTransform:'uppercase',letterSpacing:1,marginBottom:2}}>Departure</div>
+              <div style={{fontSize:12,fontWeight:500,color:'#b0ada4',fontFamily:"'DM Mono',monospace"}}>{t.dep}</div>
+            </div>}
+            {t.ret && <div>
+              <div style={{fontSize:9,color:'#555',fontFamily:"'DM Mono',monospace",textTransform:'uppercase',letterSpacing:1,marginBottom:2}}>Return</div>
+              <div style={{fontSize:12,fontWeight:500,color:'#b0ada4',fontFamily:"'DM Mono',monospace"}}>{t.ret}</div>
+            </div>}
+            {t.stayLabel && <div style={{background:'rgba(200,168,75,.08)',border:'1px solid rgba(200,168,75,.2)',borderRadius:3,padding:'3px 10px'}}>
+              <div style={{fontSize:9,color:'#8a6a30',fontFamily:"'DM Mono',monospace",textTransform:'uppercase',letterSpacing:1,marginBottom:1}}>Stay</div>
+              <div style={{fontSize:12,fontWeight:700,color:'#c8a84b',fontFamily:"'DM Mono',monospace"}}>{t.stayLabel}</div>
+            </div>}
+          </div>
+
+          {/* Price + Book */}
+          <div style={{display:'flex',alignItems:'center',gap:14,marginLeft:'auto',flexShrink:0}}>
+            <div style={{textAlign:'right'}}>
+              {t.best && <div style={{fontSize:9,color:'#38c870',fontFamily:"'DM Mono',monospace",letterSpacing:1,marginBottom:2}}>★ BEST DEAL</div>}
+              {t.real && !t.best && <div style={{fontSize:9,color:'#4a9a6a',fontFamily:"'DM Mono',monospace",letterSpacing:1,marginBottom:2}}>● SCRAPED</div>}
+              <div style={{fontSize:26,fontWeight:700,fontFamily:"'Playfair Display',serif",color:t.best?'#38c870':'#f0ede4',lineHeight:1}}>{t.price}</div>
+              <div style={{fontSize:9,color:'#444',fontFamily:"'DM Mono',monospace",marginTop:3,letterSpacing:1}}>ROUND TRIP</div>
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:6,alignItems:'flex-end',flexShrink:0}}>
+              <a href={t.buyUrl||'#'} target="_blank" rel="noopener noreferrer"
+                style={{display:'inline-flex',alignItems:'center',gap:5,
+                  background:'linear-gradient(135deg,#c8a84b,#8a6a10)',color:'#0a0a0a',
+                  textDecoration:'none',padding:'9px 16px',borderRadius:4,
+                  fontSize:11,fontWeight:700,letterSpacing:1.5,
+                  fontFamily:"'DM Mono',monospace",transition:'all .15s',whiteSpace:'nowrap'}}
+                onMouseEnter={e=>{e.currentTarget.style.filter='brightness(1.15)';}}
+                onMouseLeave={e=>{e.currentTarget.style.filter='none';}}>
+                ✈ Google Flights
+              </a>
+              <a href={'https://www.kayak.com/flights/'+(t.fromCode||'')+'-'+(t.toCode||'')+(t.depDate?'/'+t.depDate:'')+(t.retDate?'/'+t.retDate:'')+'/business?sort=price_a'}
+                target="_blank" rel="noopener noreferrer"
+                style={{display:'inline-flex',alignItems:'center',gap:5,
+                  background:'transparent',border:'1px solid #2a2a2a',color:'#888',
+                  textDecoration:'none',padding:'6px 14px',borderRadius:4,
+                  fontSize:10,fontWeight:600,letterSpacing:1,
+                  fontFamily:"'DM Mono',monospace",transition:'all .15s',whiteSpace:'nowrap'}}
+                onMouseEnter={e=>{e.currentTarget.style.borderColor='#555';e.currentTarget.style.color='#bbb';}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor='#2a2a2a';e.currentTarget.style.color='#888';}}>
+                ✈ Kayak
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Log ───────────────────────────────────────────────────────────────────
+  function Log({ msgs }) {
+    const r = useRef(null);
+    useEffect(()=>{ if(r.current) r.current.scrollTop=r.current.scrollHeight; },[msgs]);
+    return (
+      <div ref={r} className="log-box">
+        {msgs.map((m,i)=>(
+          <div key={i} className="log-entry">
+            <span style={{color:'#2a2a2a',marginRight:6}}>›</span>
+            <span style={{color:m.t==='sys'?'#c8a84b':m.t==='err'?'#e05555':'#38c870'}}>{m.txt}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // ── Toggle chip ──────────────────────────────────────────────────────────
+  function Chip({ label, on, onClick }) {
+    return <span className={'chip'+(on?' on':'')} onClick={onClick}>{label}</span>;
+  }
+
+  // ── Main App ──────────────────────────────────────────────────────────────
+  function App() {
+    const MONTH_OPTS = makeMonthOpts();
+    const [serverUrl, setServerUrl] = useState('https://fsx-flight-scout-production.up.railway.app');
+    const [showServer, setShowServer] = useState(false);
+    const [tickets,   setTickets]   = useState([]);
+    const [loading,   setLoading]   = useState(false);
+    const [logs,      setLogs]      = useState([{t:'sys',txt:'FSX — Flight Scout ready. Configure search and click SCRAPE DEALS.'}]);
+    const [prog,      setProg]      = useState(0);
+    const [last,      setLast]      = useState(null);
+    const abortRef = useRef(false);
+
+    const [fromIdx,    setFromIdx]    = useState(0);
+    const [toIdx,      setToIdx]      = useState(2);
+    const [cabinClass, setCabinClass] = useState('Business');
+    const [selStops,   setSelStops]   = useState([0,1,2]);
+    const toggleStop = v => setSelStops(p=>p.includes(v)?p.filter(x=>x!==v):[...p,v].sort());
+    const [fromDays,   setFromDays]   = useState('14');
+    const [toDays,     setToDays]     = useState('200');
+
+    const allHubCodes  = EU_HUB_LIST.map(h=>h.code);
+    const allDestCodes = AS_AIRPORT_LIST.map(a=>a.code);
+    const allAirCodes  = ALL_AIRLINES.map(a=>a.code);
+    const [selHubs,     setSelHubs]     = useState(allHubCodes);
+    const [selDests,    setSelDests]    = useState(allDestCodes);
+    const [selAirlines, setSelAirlines] = useState(allAirCodes);
+
+    const toggleHub  = c => setSelHubs(p=>p.includes(c)?p.filter(x=>x!==c):[...p,c]);
+    const toggleDest = c => setSelDests(p=>p.includes(c)?p.filter(x=>x!==c):[...p,c]);
+    const toggleAir  = c => setSelAirlines(p=>p.includes(c)?p.filter(x=>x!==c):[...p,c]);
+
+    const addLog = (txt,t='ok') => setLogs(p=>[...p.slice(-30),{t,txt}]);
+
+    function handleServer(url) {
+      setServerUrl(url);
+      setShowServer(false);
+      addLog('Connected to scraper: '+url,'sys');
+    }
+
+    function stopScan() {
+      abortRef.current = true;
+      setLoading(false);
+      addLog('⛔ Scan stopped by user','err');
+    }
+
+    async function scan() {
+      if (!serverUrl) { setShowServer(true); return; }
+      abortRef.current = false;
+      setLoading(true); setTickets([]); setProg(5);
+
+      const fromM = MONTH_OPTS[fromIdx];
+      const toM   = MONTH_OPTS[toIdx];
+      const pad   = n => String(n).padStart(2,'0');
+      const depIso = fromM.yr+'-'+pad(fromM.month+1)+'-15';
+      const retIso = toM.yr+'-'+pad(toM.month+1)+'-15';
+
+      const hubsParam  = selHubs.length>0&&selHubs.length<allHubCodes.length  ? selHubs.join(',')  : 'ALL';
+      const destsParam = selDests.length>0&&selDests.length<allDestCodes.length? selDests.join(',') : 'ALL';
+
+      addLog('Starting scan — scraping Google Flights…','sys');
+      addLog('Hubs: '+(hubsParam==='ALL'?'All EU hubs':selHubs.join(', ')), 'sys');
+      addLog('Dests: '+(destsParam==='ALL'?'All Asia':selDests.join(', ')), 'sys');
+      addLog('Period: '+depIso+' → '+retIso+' | '+cabinClass, 'sys');
+      addLog('Connecting to scraper server…','sys');
+      setProg(15);
+
+      try {
+        const params = new URLSearchParams({
+          fromCode: hubsParam,
+          toCode: destsParam,
+          depart: depIso,
+          ret: retIso,
+          cabin: cabinClass,
+        });
+
+        const r = await fetch(`${serverUrl}/scan?${params}`, { mode:'cors' });
+        setProg(80);
+
+        if (!r.ok) throw new Error(`Server error ${r.status}`);
+        const data = await r.json();
+        setProg(95);
+
+        if (!data.ok) throw new Error(data.error || 'Scan failed');
+
+        let results = data.results || [];
+
+        // Client-side filters
+        if (selStops.length>0 && selStops.length<3) {
+          results = results.filter(t => {
+            const s = t.stops||0;
+            const bucket = s===0?0:s===1?1:2;
+            return selStops.includes(bucket);
+          });
+        }
+        if (selAirlines.length>0 && selAirlines.length<allAirCodes.length) {
+          results = results.filter(t => {
+            const code = t.airlineCode||t.airline_code||'';
+            return selAirlines.some(a=>t.airline?.includes(a)||code===a);
+          });
+        }
+
+        // Best per route
+        const bestPerRoute = {};
+        results.forEach(t=>{
+          const k=(t.fromCode||t.from)+'-'+(t.toCode||t.to);
+          if(!bestPerRoute[k]||t.numPrice<bestPerRoute[k].numPrice) bestPerRoute[k]=t;
+        });
+        const top = Object.values(bestPerRoute).sort((a,b)=>(a.numPrice||0)-(b.numPrice||0)).slice(0,30);
+        if(top.length>0) top[0].best=true;
+
+        setTickets(top);
+        setLast(new Date());
+        addLog('✓ Found '+top.length+' best deals from '+results.length+' scraped flights','sys');
+        setProg(100);
+        setTimeout(()=>setProg(0),2000);
+      } catch (e) {
+        addLog('Error: '+e.message,'err');
+        if(e.message.includes('Failed to fetch')||e.message.includes('NetworkError'))
+          addLog('Cannot reach scraper — check server URL','err');
+        setProg(0);
+      }
+      setLoading(false);
+    }
+
+    const isNarrow = selHubs.length<=3 || selDests.length<=3;
+
+    return (
+      <div style={{minHeight:'100vh',background:'#0a0a0a',paddingBottom:60}}>
+        {showServer && <ServerModal onSave={handleServer} initUrl={serverUrl}/>}
+
+        <div style={{maxWidth:1020,margin:'0 auto',padding:'40px 24px 60px'}}>
+
+          {/* ── Header ── */}
+          <div style={{marginBottom:32,borderBottom:'1px solid #1e1e1e',paddingBottom:24}}>
+            <div style={{fontSize:10,letterSpacing:6,color:'#c8a84b',textTransform:'uppercase',marginBottom:10,fontFamily:"'DM Mono',monospace"}}>
+              ◆ FSX · Flight Scout
+            </div>
+            <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',flexWrap:'wrap',gap:12}}>
+              <h1 style={{fontSize:'clamp(40px,7vw,72px)',fontWeight:900,fontFamily:"'Playfair Display',serif",color:'#f0ede4',lineHeight:.92,letterSpacing:'-2px'}}>
+                Flight<br/>
+                <span style={{background:'linear-gradient(135deg,#c8a84b,#e8c86b)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent'}}>Scout</span>
+              </h1>
+              <div style={{textAlign:'right',paddingBottom:4}}>
+                <div style={{fontSize:9,color:'#333',letterSpacing:3,marginBottom:4,fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>STATUS</div>
+                <div style={{color:loading?'#c8a84b':serverUrl?'#38c870':'#e05555',fontSize:11,letterSpacing:2,fontFamily:"'DM Mono',monospace",animation:loading?'pulse 1s infinite':'none'}}>
+                  {loading?'● SCRAPING…':serverUrl?'● SCRAPER CONNECTED':'● NO SERVER'}
+                </div>
+              </div>
+            </div>
+            <p style={{color:'#444',fontSize:12,letterSpacing:2,textTransform:'uppercase',fontFamily:"'DM Mono',monospace",marginTop:12}}>
+              Europe → Asia · {cabinClass} Class · Google Flights · No API Key
+            </p>
+          </div>
+
+          {/* ── Search Box ── */}
+          <div className="search-box">
+            <div style={{fontSize:10,letterSpacing:3,color:'#c8a84b',textTransform:'uppercase',fontFamily:"'DM Mono',monospace",marginBottom:18}}>◆ SEARCH OPTIONS</div>
+
+            {/* FROM HUBS */}
+            <div style={{marginBottom:16}}>
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+                <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>FROM HUB</label>
+                <span style={{fontSize:10,color:'#444',fontFamily:"'DM Mono',monospace"}}>
+                  {selHubs.length===allHubCodes.length?'all hubs':selHubs.length+' selected'}
+                </span>
+                <button onClick={()=>setSelHubs(allHubCodes)} style={{background:'none',border:'1px solid #2a2a2a',borderRadius:3,color:'#555',fontSize:10,cursor:'pointer',fontFamily:"'DM Mono',monospace",padding:'2px 8px',letterSpacing:.5,transition:'all .15s'}}
+                  onMouseEnter={e=>e.currentTarget.style.borderColor='#555'}
+                  onMouseLeave={e=>e.currentTarget.style.borderColor='#2a2a2a'}>ALL</button>
+                <button onClick={()=>setSelHubs([])} style={{background:'none',border:'1px solid #2a2a2a',borderRadius:3,color:'#555',fontSize:10,cursor:'pointer',fontFamily:"'DM Mono',monospace",padding:'2px 8px',letterSpacing:.5,transition:'all .15s'}}
+                  onMouseEnter={e=>e.currentTarget.style.borderColor='#555'}
+                  onMouseLeave={e=>e.currentTarget.style.borderColor='#2a2a2a'}>NONE</button>
+              </div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                {EU_HUB_LIST.map(h=>(
+                  <Chip key={h.code} label={h.code+' · '+h.name} on={selHubs.includes(h.code)} onClick={()=>toggleHub(h.code)}/>
+                ))}
+              </div>
+            </div>
+
+            <div className="section-div"/>
+
+            {/* TO DESTINATIONS */}
+            <div style={{marginBottom:16}}>
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+                <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>TO DESTINATION</label>
+                <span style={{fontSize:10,color:'#444',fontFamily:"'DM Mono',monospace"}}>
+                  {selDests.length===allDestCodes.length?'all destinations':selDests.length+' selected'}
+                </span>
+                <button onClick={()=>setSelDests(allDestCodes)} style={{background:'none',border:'1px solid #2a2a2a',borderRadius:3,color:'#555',fontSize:10,cursor:'pointer',fontFamily:"'DM Mono',monospace",padding:'2px 8px',letterSpacing:.5,transition:'all .15s'}}
+                  onMouseEnter={e=>e.currentTarget.style.borderColor='#555'}
+                  onMouseLeave={e=>e.currentTarget.style.borderColor='#2a2a2a'}>ALL</button>
+                <button onClick={()=>setSelDests([])} style={{background:'none',border:'1px solid #2a2a2a',borderRadius:3,color:'#555',fontSize:10,cursor:'pointer',fontFamily:"'DM Mono',monospace",padding:'2px 8px',letterSpacing:.5,transition:'all .15s'}}
+                  onMouseEnter={e=>e.currentTarget.style.borderColor='#555'}
+                  onMouseLeave={e=>e.currentTarget.style.borderColor='#2a2a2a'}>NONE</button>
+              </div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                {AS_AIRPORT_LIST.map(a=>(
+                  <Chip key={a.code} label={a.code+' · '+a.name} on={selDests.includes(a.code)} onClick={()=>toggleDest(a.code)}/>
+                ))}
+              </div>
+            </div>
+
+            <div className="section-div"/>
+
+            {/* ── Quick Explore ── */}
+            {(()=>{
+              const fromM = MONTH_OPTS[fromIdx];
+              const toM   = MONTH_OPTS[toIdx];
+              const pad   = n => String(n).padStart(2,'0');
+              const d1 = fromM.yr+'-'+pad(fromM.month+1)+'-01';
+              const d2 = toM.yr+'-'+pad(toM.month+1)+'-'+pad(new Date(toM.yr,toM.month+1,0).getDate());
+              const hubsToShow = selHubs.length>0 ? EU_HUB_LIST.filter(h=>selHubs.includes(h.code)) : EU_HUB_LIST;
+              const destsToShow = selDests.length>0 ? AS_AIRPORT_LIST.filter(a=>selDests.includes(a.code)) : AS_AIRPORT_LIST;
+              const makeGFExplore  = iata => 'https://www.google.com/travel/explore?tfs=EgYIAxACGAA%3D&q=flights+from+'+iata+'&d='+d1+'&return='+d2;
+              const makeKayakExplore = iata => 'https://www.kayak.com/explore/'+iata+'-anywhere/'+fromM.yr+'-'+pad(fromM.month+1)+'/'+toM.yr+'-'+pad(toM.month+1)+'?budget=5000';
+              const makeSkyscanner = iata => 'https://www.skyscanner.net/transport/flights/'+iata.toLowerCase()+'/asia/'+fromM.yr.toString().slice(-2)+pad(fromM.month+1)+'/'+toM.yr.toString().slice(-2)+pad(toM.month+1)+'/?adultsv2=1&cabinclass='+cabinClass.toLowerCase()+'&rtn=1';
+              const makeGFRoute    = (from,to) => 'https://www.google.com/travel/flights?q='+encodeURIComponent(cabinClass+' class flights '+from+' to '+to+' '+d1+' return '+d2);
+
+              return (
+                <div>
+                  <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+                    <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>QUICK EXPLORE</label>
+                    <span style={{fontSize:10,color:'#333',fontFamily:"'DM Mono',monospace"}}>no scraper calls · opens in new tab</span>
+                  </div>
+                  <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                    {hubsToShow.map(hub=>(
+                      <div key={hub.code} style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                        <span style={{fontSize:11,color:'#888',fontFamily:"'DM Mono',monospace",minWidth:90,fontWeight:600}}>
+                          {hub.code} · {hub.name}
+                        </span>
+                        <a href={makeGFExplore(hub.code)} target="_blank" rel="noopener noreferrer"
+                          style={{display:'inline-flex',alignItems:'center',gap:5,background:'rgba(66,133,244,.08)',border:'1px solid rgba(66,133,244,.25)',color:'#7aacf8',textDecoration:'none',padding:'4px 12px',borderRadius:3,fontSize:10,fontFamily:"'DM Mono',monospace",letterSpacing:.5,fontWeight:600,transition:'all .15s',whiteSpace:'nowrap'}}
+                          onMouseEnter={e=>{e.currentTarget.style.background='rgba(66,133,244,.15)';}}
+                          onMouseLeave={e=>{e.currentTarget.style.background='rgba(66,133,244,.08)';}}>
+                          🗺 Google Explore
+                        </a>
+                        <a href={makeKayakExplore(hub.code)} target="_blank" rel="noopener noreferrer"
+                          style={{display:'inline-flex',alignItems:'center',gap:5,background:'rgba(255,100,0,.06)',border:'1px solid rgba(255,100,0,.2)',color:'#e07840',textDecoration:'none',padding:'4px 12px',borderRadius:3,fontSize:10,fontFamily:"'DM Mono',monospace",letterSpacing:.5,fontWeight:600,transition:'all .15s',whiteSpace:'nowrap'}}
+                          onMouseEnter={e=>{e.currentTarget.style.background='rgba(255,100,0,.12)';}}
+                          onMouseLeave={e=>{e.currentTarget.style.background='rgba(255,100,0,.06)';}}>
+                          🔍 Kayak Explore
+                        </a>
+                        <a href={makeSkyscanner(hub.code)} target="_blank" rel="noopener noreferrer"
+                          style={{display:'inline-flex',alignItems:'center',gap:5,background:'rgba(0,157,224,.06)',border:'1px solid rgba(0,157,224,.2)',color:'#4ab8e8',textDecoration:'none',padding:'4px 12px',borderRadius:3,fontSize:10,fontFamily:"'DM Mono',monospace",letterSpacing:.5,fontWeight:600,transition:'all .15s',whiteSpace:'nowrap'}}
+                          onMouseEnter={e=>{e.currentTarget.style.background='rgba(0,157,224,.12)';}}
+                          onMouseLeave={e=>{e.currentTarget.style.background='rgba(0,157,224,.06)';}}>
+                          ✦ Skyscanner
+                        </a>
+                        {destsToShow.length<=3 && destsToShow.map(dst=>(
+                          <a key={dst.code} href={makeGFRoute(hub.code,dst.code)} target="_blank" rel="noopener noreferrer"
+                            style={{display:'inline-flex',alignItems:'center',gap:5,background:'rgba(200,168,75,.06)',border:'1px solid rgba(200,168,75,.2)',color:'#c8a84b',textDecoration:'none',padding:'4px 12px',borderRadius:3,fontSize:10,fontFamily:"'DM Mono',monospace",letterSpacing:.5,fontWeight:600,transition:'all .15s',whiteSpace:'nowrap'}}
+                            onMouseEnter={e=>{e.currentTarget.style.background='rgba(200,168,75,.12)';}}
+                            onMouseLeave={e=>{e.currentTarget.style.background='rgba(200,168,75,.06)';}}>
+                            ✈ {hub.code}→{dst.code} GFlights
+                          </a>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div className="section-div"/>
+
+            {/* Travel period + Cabin + Stops + Stay */}
+            <div style={{display:'flex',alignItems:'flex-end',gap:16,flexWrap:'wrap',marginBottom:16}}>
+              <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>TRAVEL FROM</label>
+                <select value={fromIdx} onChange={e=>{const v=parseInt(e.target.value);setFromIdx(v);if(v>toIdx)setToIdx(v);}}>
+                  {MONTH_OPTS.map((o,i)=><option key={i} value={i}>{o.label}</option>)}
+                </select>
+              </div>
+              <div style={{color:'#c8a84b',fontSize:18,paddingBottom:8}}>→</div>
+              <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>TRAVEL TO</label>
+                <select value={toIdx} onChange={e=>{const v=parseInt(e.target.value);setToIdx(v);if(v<fromIdx)setFromIdx(v);}}>
+                  {MONTH_OPTS.map((o,i)=><option key={i} value={i}>{o.label}</option>)}
+                </select>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:4,marginLeft:8}}>
+                <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>CABIN</label>
+                <div style={{display:'flex',gap:6}}>
+                  {['Economy','Business','First'].map(cls=>(
+                    <button key={cls} onClick={()=>setCabinClass(cls)} style={{
+                      background:cabinClass===cls?'linear-gradient(135deg,#c8a84b,#8a6a10)':'transparent',
+                      border:cabinClass===cls?'none':'1.5px solid #2a2a2a',
+                      color:cabinClass===cls?'#0a0a0a':'#555',
+                      borderRadius:4,padding:'7px 14px',fontSize:10,fontWeight:cabinClass===cls?800:400,
+                      letterSpacing:1,fontFamily:"'DM Mono',monospace",cursor:'pointer',transition:'all .2s',textTransform:'uppercase'
+                    }}>{cls}</button>
+                  ))}
+                </div>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:4,marginLeft:8}}>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>STOPS</label>
+                  <button onClick={()=>setSelStops([0,1,2])} style={{background:'none',border:'1px solid #2a2a2a',borderRadius:3,color:'#555',fontSize:10,cursor:'pointer',fontFamily:"'DM Mono',monospace",padding:'2px 8px',letterSpacing:.5,transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.borderColor='#555'} onMouseLeave={e=>e.currentTarget.style.borderColor='#2a2a2a'}>ALL</button>
+                  <button onClick={()=>setSelStops([])} style={{background:'none',border:'1px solid #2a2a2a',borderRadius:3,color:'#555',fontSize:10,cursor:'pointer',fontFamily:"'DM Mono',monospace",padding:'2px 8px',letterSpacing:.5,transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.borderColor='#555'} onMouseLeave={e=>e.currentTarget.style.borderColor='#2a2a2a'}>NONE</button>
+                </div>
+                <div style={{display:'flex',gap:6,marginTop:4}}>
+                  {[{v:0,l:'Direct'},{v:1,l:'1 Stop'},{v:2,l:'2+ Stops'}].map(({v,l})=>(
+                    <Chip key={v} label={l} on={selStops.includes(v)} onClick={()=>toggleStop(v)}/>
+                  ))}
+                </div>
+              </div>
+              <div style={{display:'flex',alignItems:'flex-end',gap:8,marginLeft:8}}>
+                <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                  <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>STAY MIN</label>
+                  <input type="number" min="1" max="365" value={fromDays} onChange={e=>setFromDays(e.target.value)}
+                    style={{background:'#1a1a1a',border:'1.5px solid #2e2e2e',color:'#c8a84b',borderRadius:4,padding:'8px 12px',fontSize:13,fontFamily:"'DM Mono',monospace",outline:'none',width:80}}/>
+                </div>
+                <div style={{color:'#c8a84b',paddingBottom:8}}>→</div>
+                <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                  <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>STAY MAX</label>
+                  <input type="number" min="1" max="365" value={toDays} onChange={e=>setToDays(e.target.value)}
+                    style={{background:'#1a1a1a',border:'1.5px solid #2e2e2e',color:'#c8a84b',borderRadius:4,padding:'8px 12px',fontSize:13,fontFamily:"'DM Mono',monospace",outline:'none',width:80}}/>
+                </div>
+              </div>
+            </div>
+
+            <div className="section-div"/>
+
+            {/* Airlines */}
+            <div>
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+                <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>AIRLINES</label>
+                <span style={{fontSize:10,color:'#444',fontFamily:"'DM Mono',monospace"}}>
+                  {selAirlines.length===allAirCodes.length?'all airlines':selAirlines.length+' selected'}
+                </span>
+                <button onClick={()=>setSelAirlines(allAirCodes)} style={{background:'none',border:'1px solid #2a2a2a',borderRadius:3,color:'#555',fontSize:10,cursor:'pointer',fontFamily:"'DM Mono',monospace",padding:'2px 8px',letterSpacing:.5,transition:'all .15s'}}
+                  onMouseEnter={e=>e.currentTarget.style.borderColor='#555'}
+                  onMouseLeave={e=>e.currentTarget.style.borderColor='#2a2a2a'}>ALL</button>
+                <button onClick={()=>setSelAirlines([])} style={{background:'none',border:'1px solid #2a2a2a',borderRadius:3,color:'#555',fontSize:10,cursor:'pointer',fontFamily:"'DM Mono',monospace",padding:'2px 8px',letterSpacing:.5,transition:'all .15s'}}
+                  onMouseEnter={e=>e.currentTarget.style.borderColor='#555'}
+                  onMouseLeave={e=>e.currentTarget.style.borderColor='#2a2a2a'}>NONE</button>
+              </div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                {ALL_AIRLINES.map(a=>(
+                  <Chip key={a.code} label={a.code+' · '+a.name} on={selAirlines.includes(a.code)} onClick={()=>toggleAir(a.code)}/>
+                ))}
+              </div>
+            </div>
+
+          </div>
+
+          {/* ── Action Row ── */}
+          <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:24,flexWrap:'wrap'}}>
+            {!loading ? (
+              <button className="scan-btn" onClick={scan}>⌖  SCRAPE DEALS</button>
+            ) : (
+              <button onClick={stopScan}
+                style={{background:'#1a0a0a',border:'1.5px solid #883333',color:'#e05555',borderRadius:4,padding:'16px 36px',fontSize:14,fontWeight:700,letterSpacing:3,textTransform:'uppercase',cursor:'pointer',fontFamily:"'DM Mono',monospace",transition:'all .2s'}}
+                onMouseEnter={e=>{e.currentTarget.style.background='#2a0a0a';e.currentTarget.style.borderColor='#cc4444';}}
+                onMouseLeave={e=>{e.currentTarget.style.background='#1a0a0a';e.currentTarget.style.borderColor='#883333';}}>
+                <span style={{display:'flex',alignItems:'center',gap:10}}>
+                  <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⟳</span>
+                  ⛔ STOP SCAN
+                </span>
+              </button>
+            )}
+            <button onClick={()=>setShowServer(true)}
+              style={{background:'transparent',border:'1px solid #2a2a2a',color:'#555',borderRadius:4,padding:'10px 18px',fontSize:10,letterSpacing:2,textTransform:'uppercase',cursor:'pointer',fontFamily:"'DM Mono',monospace",transition:'all .2s'}}
+              onMouseEnter={e=>e.currentTarget.style.borderColor='#c8a84b'}
+              onMouseLeave={e=>e.currentTarget.style.borderColor='#2a2a2a'}>
+              {serverUrl ? '✓ '+serverUrl.replace(/https?:\/\//,'').slice(0,28) : 'SET SERVER'}
+            </button>
+            {isNarrow && <span style={{background:'rgba(56,200,112,.08)',border:'1px solid rgba(56,200,112,.2)',borderRadius:3,padding:'6px 12px',fontSize:10,color:'#38c870',fontFamily:"'DM Mono',monospace",letterSpacing:1}}>⚡ FAST MODE</span>}
+            {last && <span style={{color:'#333',fontSize:10,fontFamily:"'DM Mono',monospace"}}>Last: {last.toLocaleTimeString('en-US',{hour12:false})}</span>}
+          </div>
+
+          {/* ── Progress ── */}
+          {prog>0 && <div className="progress-bar"><div className="progress-fill" style={{width:prog+'%'}}/></div>}
+
+          {/* ── Log ── */}
+          <div style={{marginBottom:32}}>
+            <div style={{fontSize:9,letterSpacing:3,color:'#333',textTransform:'uppercase',marginBottom:8,fontFamily:"'DM Mono',monospace"}}>SCRAPER LOG</div>
+            <Log msgs={logs}/>
+          </div>
+
+          {/* ── Warning ── */}
+          <div style={{background:'rgba(255,200,0,.03)',border:'1px solid rgba(255,200,0,.1)',borderRadius:4,padding:'10px 16px',marginBottom:24,fontSize:11,color:'#665500',fontFamily:"'DM Mono',monospace",display:'flex',gap:8,alignItems:'flex-start'}}>
+            <span>⚠</span>
+            <span>Scraping Google Flights may be against their ToS. Use for personal research only. Always verify prices before booking.</span>
+          </div>
+
+          {/* ── Results ── */}
+          {tickets.length>0 && (
+            <div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,flexWrap:'wrap',gap:8}}>
+                <div style={{fontSize:10,letterSpacing:3,color:'#c8a84b',textTransform:'uppercase',fontFamily:"'DM Mono',monospace"}}>
+                  ◆ {tickets.length} DEALS FOUND
+                </div>
+                <div style={{fontSize:9,color:'#333',letterSpacing:2,textTransform:'uppercase',fontFamily:"'DM Mono',monospace"}}>
+                  SORTED BY PRICE ↑
+                </div>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                {tickets.map((t,i)=><Card key={i} t={t} i={i}/>)}
+              </div>
+              <div style={{marginTop:20,padding:'10px 14px',background:'rgba(255,255,255,.02)',border:'1px solid #1e1e1e',borderRadius:4,fontSize:10,color:'#333',lineHeight:1.7,fontFamily:"'DM Mono',monospace"}}>
+                ⚠ Scraped prices are indicative. Always verify on Google Flights or airline websites before booking.
+              </div>
+            </div>
+          )}
+
+          {/* ── Empty state ── */}
+          {!loading && tickets.length===0 && (
+            <div style={{textAlign:'center',padding:'60px 0',color:'#222'}}>
+              <div style={{fontSize:56,marginBottom:14}}>✈</div>
+              <div style={{fontSize:10,letterSpacing:4,textTransform:'uppercase',fontFamily:"'DM Mono',monospace",color:'#2a2a2a'}}>
+                Awaiting scrape command
+              </div>
+            </div>
+          )}
+
+          {/* ── Footer ── */}
+          <div style={{marginTop:60,paddingTop:16,borderTop:'1px solid #141414',display:'flex',justifyContent:'space-between',flexWrap:'wrap',gap:8,fontSize:9,color:'#2a2a2a',letterSpacing:2,textTransform:'uppercase',fontFamily:"'DM Mono',monospace"}}>
+            <span>FSX · Flight Scout</span>
+            <span>EU → ASIA · {cabinClass.toUpperCase()} · Powered by Google Flights Scraper</span>
+          </div>
+
+        </div>
+      </div>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
