@@ -297,6 +297,9 @@
     const toM   = MONTH_OPTS[toIdx];
     const depIso = `${fromM.yr}-${pad(fromM.month+1)}-15`;
     const retIso = `${toM.yr}-${pad(toM.month+1)}-15`;
+    const stayDaysCount = Math.round((new Date(retIso+'T12:00:00') - new Date(depIso+'T12:00:00')) / 86400000);
+    const stayWeeks = Math.round(stayDaysCount / 7);
+    const stayLabel = stayDaysCount <= 0 ? '—' : stayWeeks > 0 ? `${stayWeeks} wks (${stayDaysCount}d)` : `${stayDaysCount}d`;
     const d1 = `${fromM.yr}-${pad(fromM.month+1)}-01`;
     const d2 = `${toM.yr}-${pad(toM.month+1)}-${pad(new Date(toM.yr,toM.month+1,0).getDate())}`;
 
@@ -477,7 +480,10 @@
                   {MONTH_OPTS.map((o,i)=><option key={i} value={i}>{o.label}</option>)}
                 </select>
               </div>
-              <div style={{color:'#c8a84b',fontSize:18,paddingBottom:8}}>→</div>
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2,paddingBottom:4}}>
+                <div style={{color:'#c8a84b',fontSize:18}}>→</div>
+                {stayDaysCount > 0 && <div style={{background:'rgba(200,168,75,.12)',border:'1px solid rgba(200,168,75,.25)',borderRadius:3,padding:'2px 8px',fontSize:11,fontWeight:700,color:'#c8a84b',fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap'}}>{stayLabel}</div>}
+              </div>
               <div style={{display:'flex',flexDirection:'column',gap:4}}>
                 <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>TRAVEL TO</label>
                 <select value={toIdx} onChange={e=>{const v=parseInt(e.target.value);setToIdx(v);if(v<fromIdx)setFromIdx(v);}}>
