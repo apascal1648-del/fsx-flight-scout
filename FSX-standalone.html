@@ -278,6 +278,7 @@
     const [depToIdx,   setDepToIdx]   = useState(1);  // departure window end (same month = whole month)
     const [minDays,    setMinDays]    = useState(90);
     const [maxDays,    setMaxDays]    = useState(120);
+    const [preciseMode, setPreciseMode] = useState(false);
     const [cabinClass, setCabinClass] = useState('Business');
     const [selStops,   setSelStops]   = useState([0,1,2]);
     const toggleStop = v => setSelStops(p=>p.includes(v)?p.filter(x=>x!==v):[...p,v].sort());
@@ -301,18 +302,23 @@
     const winStart = `${depFromM.yr}-${pad(depFromM.month+1)}-01`;
     const winEnd   = `${depToM.yr}-${pad(depToM.month+1)}-${pad(new Date(depToM.yr,depToM.month+1,0).getDate())}`;
     const avgStay  = Math.round((minDays+maxDays)/2);
-    // Sample ~6 departure dates evenly across the window
-    function getSampleDates() {
+    // All days in window
+    function getAllDates() {
       const start = new Date(winStart+'T12:00:00');
       const end   = new Date(winEnd+'T12:00:00');
-      const diffDays = Math.round((end-start)/86400000);
-      const count = Math.min(6, diffDays+1);
       const dates = [];
-      for (let i=0;i<count;i++) {
-        const d = new Date(start.getTime() + Math.round(i*(diffDays/(count-1||1)))*86400000);
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate()+1))
         dates.push(`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`);
-      }
-      return [...new Set(dates)];
+      return dates;
+    }
+    function getSampleDates() {
+      const all = getAllDates();
+      if (preciseMode) return all;
+      const count = Math.min(6, all.length);
+      if (count >= all.length) return all;
+      const out = [];
+      for (let i=0;i<count;i++) out.push(all[Math.round(i*(all.length-1)/(count-1))]);
+      return [...new Set(out)];
     }
     const sampleDates = getSampleDates();
     // For explore links, use mid-window dep + avg stay
@@ -532,12 +538,17 @@
                   onBlur={e=>e.target.style.borderColor='#2e2e2e'}/>
               </div>
 
-              {/* Summary badge */}
-              <div style={{display:'flex',flexDirection:'column',gap:4,paddingBottom:2}}>
-                <div style={{fontSize:9,color:'#333',fontFamily:"'DM Mono',monospace",textTransform:'uppercase',letterSpacing:1}}>SCAN PLAN</div>
-                <div style={{background:'rgba(200,168,75,.08)',border:'1px solid rgba(200,168,75,.2)',borderRadius:4,padding:'9px 14px',fontSize:11,fontWeight:600,color:'#c8a84b',fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap',lineHeight:1.6}}>
+              {/* Mode + Summary badge */}
+              <div style={{display:'flex',flexDirection:'column',gap:6,paddingBottom:2}}>
+                <div style={{fontSize:9,color:'#333',fontFamily:"'DM Mono',monospace",textTransform:'uppercase',letterSpacing:1}}>SCAN MODE</div>
+                <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                  <button onClick={()=>setPreciseMode(false)} style={{background:!preciseMode?'linear-gradient(135deg,#c8a84b,#8a6a10)':'transparent',border:!preciseMode?'none':'1.5px solid #2a2a2a',color:!preciseMode?'#0a0a0a':'#555',borderRadius:4,padding:'7px 14px',fontSize:10,fontWeight:!preciseMode?800:400,letterSpacing:1,fontFamily:"'DM Mono',monospace",cursor:'pointer',transition:'all .2s'}}>⚡ FAST</button>
+                  <button onClick={()=>setPreciseMode(true)}  style={{background:preciseMode?'linear-gradient(135deg,#e05555,#8a1010)':'transparent',border:preciseMode?'none':'1.5px solid #2a2a2a',color:preciseMode?'#fff':'#555',borderRadius:4,padding:'7px 14px',fontSize:10,fontWeight:preciseMode?800:400,letterSpacing:1,fontFamily:"'DM Mono',monospace",cursor:'pointer',transition:'all .2s'}}>🔍 PRECISE</button>
+                </div>
+                <div style={{background: preciseMode?'rgba(224,85,85,.08)':'rgba(200,168,75,.08)', border:`1px solid ${preciseMode?'rgba(224,85,85,.25)':'rgba(200,168,75,.2)'}`,borderRadius:4,padding:'8px 14px',fontSize:11,fontWeight:600,color:preciseMode?'#e07070':'#c8a84b',fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap',lineHeight:1.7}}>
                   {sampleDates.length} dep dates · {minDays}–{maxDays}d stay<br/>
-                  <span style={{fontSize:10,color:'#8a6a30'}}>{winStart} → {winEnd}</span>
+                  <span style={{fontSize:10,opacity:.7}}>{winStart} → {winEnd}</span><br/>
+                  <span style={{fontSize:10,opacity:.6}}>~{sampleDates.length * selHubs.length * selDests.length} scrape calls</span>
                 </div>
               </div>
 
