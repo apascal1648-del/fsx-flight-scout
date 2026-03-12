@@ -274,8 +274,10 @@
     const [last,        setLast]        = useState(null);
     const abortRef = useRef(false);
 
-    const [fromIdx,    setFromIdx]    = useState(1);
-    const [toIdx,      setToIdx]      = useState(4);
+    const [depFromIdx, setDepFromIdx] = useState(1);  // departure window start
+    const [depToIdx,   setDepToIdx]   = useState(1);  // departure window end (same month = whole month)
+    const [minDays,    setMinDays]    = useState(90);
+    const [maxDays,    setMaxDays]    = useState(120);
     const [cabinClass, setCabinClass] = useState('Business');
     const [selStops,   setSelStops]   = useState([0,1,2]);
     const toggleStop = v => setSelStops(p=>p.includes(v)?p.filter(x=>x!==v):[...p,v].sort());
@@ -293,20 +295,35 @@
 
     const addLog = (txt,t='ok') => setLogs(p=>[...p.slice(-30),{t,txt}]);
 
-    const fromM = MONTH_OPTS[fromIdx];
-    const toM   = MONTH_OPTS[toIdx];
-    const depIso = `${fromM.yr}-${pad(fromM.month+1)}-15`;
-    const retIso = `${toM.yr}-${pad(toM.month+1)}-15`;
-    const stayDaysCount = Math.round((new Date(retIso+'T12:00:00') - new Date(depIso+'T12:00:00')) / 86400000);
-    const stayWeeks = Math.round(stayDaysCount / 7);
-    const stayLabel = stayDaysCount <= 0 ? '—' : stayWeeks > 0 ? `${stayWeeks} wks (${stayDaysCount}d)` : `${stayDaysCount}d`;
-    const d1 = `${fromM.yr}-${pad(fromM.month+1)}-01`;
-    const d2 = `${toM.yr}-${pad(toM.month+1)}-${pad(new Date(toM.yr,toM.month+1,0).getDate())}`;
+    const depFromM = MONTH_OPTS[depFromIdx];
+    const depToM   = MONTH_OPTS[depToIdx];
+    // Departure window: first day of depFromM → last day of depToM
+    const winStart = `${depFromM.yr}-${pad(depFromM.month+1)}-01`;
+    const winEnd   = `${depToM.yr}-${pad(depToM.month+1)}-${pad(new Date(depToM.yr,depToM.month+1,0).getDate())}`;
+    const avgStay  = Math.round((minDays+maxDays)/2);
+    // Sample ~6 departure dates evenly across the window
+    function getSampleDates() {
+      const start = new Date(winStart+'T12:00:00');
+      const end   = new Date(winEnd+'T12:00:00');
+      const diffDays = Math.round((end-start)/86400000);
+      const count = Math.min(6, diffDays+1);
+      const dates = [];
+      for (let i=0;i<count;i++) {
+        const d = new Date(start.getTime() + Math.round(i*(diffDays/(count-1||1)))*86400000);
+        dates.push(`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`);
+      }
+      return [...new Set(dates)];
+    }
+    const sampleDates = getSampleDates();
+    // For explore links, use mid-window dep + avg stay
+    const depIso = sampleDates[Math.floor(sampleDates.length/2)] || winStart;
+    const retIso = (() => { const d=new Date(depIso+'T12:00:00'); d.setDate(d.getDate()+avgStay); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; })();
+    const d1 = winStart; const d2 = winEnd;
 
     // Quick Explore URL builders
     const makeGFExplore   = iata => `https://www.google.com/travel/flights?q=flights+from+${iata}+to+asia+${d1}+return+${d2}`;
-    const makeKayakExplore= iata => `https://www.kayak.com/explore/${iata}-anywhere/${fromM.yr}-${pad(fromM.month+1)}?budget=5000`;
-    const makeSkyscanner  = iata => `https://www.skyscanner.net/transport/flights/${iata.toLowerCase()}/asia/${fromM.yr.toString().slice(-2)}${pad(fromM.month+1)}/${toM.yr.toString().slice(-2)}${pad(toM.month+1)}/?adults=1&cabinclass=${cabinClass.toLowerCase()}&rtn=1`;
+    const makeKayakExplore= iata => `https://www.kayak.com/explore/${iata}-anywhere/${depFromM.yr}-${pad(depFromM.month+1)}?budget=5000`;
+    const makeSkyscanner  = iata => `https://www.skyscanner.net/transport/flights/${iata.toLowerCase()}/asia/${depFromM.yr.toString().slice(-2)}${pad(depFromM.month+1)}/${depToM.yr.toString().slice(-2)}${pad(depToM.month+1)}/?adults=1&cabinclass=${cabinClass.toLowerCase()}&rtn=1`;
 
     function handleServer(url) { setServerUrl(url); setShowServer(false); addLog('Connected to scraper: '+url,'sys'); }
     function stopScan() { abortRef.current=true; setLoading(false); addLog('✗ Scan stopped by user','err'); }
@@ -319,28 +336,36 @@
       const hubsParam  = selHubs.length>0  && selHubs.length<allHubCodes.length  ? selHubs.join(',')  : 'ALL';
       const destsParam = selDests.length>0 && selDests.length<allDestCodes.length ? selDests.join(',') : 'ALL';
 
-      addLog('Starting scrape → Google Flights…','sys');
+      try {
+      addLog('Starting flexible scan…','sys');
+      addLog(`Depart window: ${winStart} → ${winEnd} (${sampleDates.length} sample dates)`,'sys');
+      addLog(`Stay: ${minDays}–${maxDays} days (avg ${avgStay}d) | ${cabinClass}`,'sys');
       addLog('Hubs: '+(hubsParam==='ALL'?'All EU hubs':selHubs.join(', ')), 'sys');
       addLog('Dests: '+(destsParam==='ALL'?'All Asia':selDests.join(', ')), 'sys');
-      addLog('Period: '+depIso+' → '+retIso+' | '+cabinClass, 'sys');
-      setProg(15);
+      setProg(10);
 
-      try {
-        const params = new URLSearchParams({
-          fromCode: hubsParam, toCode: destsParam,
-          depart: depIso, ret: retIso, cabin: cabinClass,
-        });
-        addLog('Connecting to scraper…','sys');
-        const r = await fetch(`${serverUrl}/scan?${params}`, { mode:'cors' });
-        setProg(80);
-        if (!r.ok) throw new Error(`Server error ${r.status}`);
-        const data = await r.json();
-        setProg(95);
-        if (!data.ok) throw new Error(data.error || 'Scan failed');
+      const allResults = [];
+      for (let i=0; i<sampleDates.length; i++) {
+        if (abortRef.current) break;
+        const dep = sampleDates[i];
+        const d = new Date(dep+'T12:00:00'); d.setDate(d.getDate()+avgStay);
+        const ret = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+        addLog(`Scanning dep ${dep} → ret ${ret}…`,'sys');
+        try {
+          const params = new URLSearchParams({ fromCode: hubsParam, toCode: destsParam, depart: dep, ret, cabin: cabinClass });
+          const r = await fetch(`${serverUrl}/scan?${params}`, { mode:'cors' });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const data = await r.json();
+          if (data.results) allResults.push(...data.results);
+          addLog(`  → ${data.results?.length||0} flights found`,'ok');
+        } catch(e) {
+          addLog(`  → Error: ${e.message}`,'err');
+        }
+        setProg(10 + Math.round((i+1)/sampleDates.length*80));
+      }
 
-        let results = data.results || [];
-
-        // Client-side filters
+      // Client-side filters
+      let results = allResults;
         if (selStops.length>0 && selStops.length<3) {
           results = results.filter(t => {
             const s = t.stops||0;
@@ -354,18 +379,18 @@
           });
         }
 
-        // Best per route
+        // Best per route+date combo
         const bestPerRoute = {};
-        results.forEach(t=>{ const k=(t.fromCode||t.from)+'-'+(t.toCode||t.to); if(!bestPerRoute[k]||t.numPrice<bestPerRoute[k].numPrice) bestPerRoute[k]=t; });
+        results.forEach(t=>{ const k=(t.fromCode||t.from)+'-'+(t.toCode||t.to)+'-'+(t.depDate||''); if(!bestPerRoute[k]||t.numPrice<bestPerRoute[k].numPrice) bestPerRoute[k]=t; });
         const top = Object.values(bestPerRoute).sort((a,b)=>(a.numPrice||0)-(b.numPrice||0)).slice(0,30);
         if(top.length>0) top[0].best=true;
 
         setTickets(top);
         setLast(new Date());
-        addLog(`✓ Found ${top.length} best deals from ${results.length} scraped flights`,'sys');
+        addLog(`✓ Found ${top.length} best deals from ${results.length} total flights`,'sys');
         setProg(100);
         setTimeout(()=>setProg(0),2000);
-      } catch(e) {
+    } catch(e) {
         addLog('Error: '+e.message,'err');
         if(e.message.includes('Failed to fetch')||e.message.includes('NetworkError'))
           addLog('Cannot reach scraper — check server URL','err');
@@ -474,22 +499,48 @@
 
             {/* Travel period + Cabin + Stops */}
             <div style={{display:'flex',alignItems:'flex-end',gap:16,flexWrap:'wrap',marginBottom:16}}>
+
+              {/* Departure window */}
               <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>TRAVEL FROM</label>
-                <select value={fromIdx} onChange={e=>{const v=parseInt(e.target.value);setFromIdx(v);if(v>toIdx)setToIdx(v);}}>
+                <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>DEPART FROM</label>
+                <select value={depFromIdx} onChange={e=>{const v=parseInt(e.target.value);setDepFromIdx(v);if(v>depToIdx)setDepToIdx(v);}}>
                   {MONTH_OPTS.map((o,i)=><option key={i} value={i}>{o.label}</option>)}
                 </select>
               </div>
-              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:2,paddingBottom:4}}>
-                <div style={{color:'#c8a84b',fontSize:18}}>→</div>
-                {stayDaysCount > 0 && <div style={{background:'rgba(200,168,75,.12)',border:'1px solid rgba(200,168,75,.25)',borderRadius:3,padding:'2px 8px',fontSize:11,fontWeight:700,color:'#c8a84b',fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap'}}>{stayLabel}</div>}
-              </div>
               <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>TRAVEL TO</label>
-                <select value={toIdx} onChange={e=>{const v=parseInt(e.target.value);setToIdx(v);if(v<fromIdx)setFromIdx(v);}}>
+                <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>DEPART TO</label>
+                <select value={depToIdx} onChange={e=>{const v=parseInt(e.target.value);setDepToIdx(v);if(v<depFromIdx)setDepFromIdx(v);}}>
                   {MONTH_OPTS.map((o,i)=><option key={i} value={i}>{o.label}</option>)}
                 </select>
               </div>
+
+              {/* Stay duration range */}
+              <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>STAY MIN (days)</label>
+                <input type="number" min="1" max="365" value={minDays}
+                  onChange={e=>{const v=parseInt(e.target.value)||1;setMinDays(v);if(v>maxDays)setMaxDays(v);}}
+                  style={{width:90,background:'#1a1a1a',border:'1.5px solid #2e2e2e',borderRadius:4,padding:'9px 12px',fontSize:14,fontFamily:"'DM Mono',monospace",color:'#f0ede4',outline:'none'}}
+                  onFocus={e=>e.target.style.borderColor='#c8a84b'}
+                  onBlur={e=>e.target.style.borderColor='#2e2e2e'}/>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>STAY MAX (days)</label>
+                <input type="number" min="1" max="365" value={maxDays}
+                  onChange={e=>{const v=parseInt(e.target.value)||1;setMaxDays(v);if(v<minDays)setMinDays(v);}}
+                  style={{width:90,background:'#1a1a1a',border:'1.5px solid #2e2e2e',borderRadius:4,padding:'9px 12px',fontSize:14,fontFamily:"'DM Mono',monospace",color:'#f0ede4',outline:'none'}}
+                  onFocus={e=>e.target.style.borderColor='#c8a84b'}
+                  onBlur={e=>e.target.style.borderColor='#2e2e2e'}/>
+              </div>
+
+              {/* Summary badge */}
+              <div style={{display:'flex',flexDirection:'column',gap:4,paddingBottom:2}}>
+                <div style={{fontSize:9,color:'#333',fontFamily:"'DM Mono',monospace",textTransform:'uppercase',letterSpacing:1}}>SCAN PLAN</div>
+                <div style={{background:'rgba(200,168,75,.08)',border:'1px solid rgba(200,168,75,.2)',borderRadius:4,padding:'9px 14px',fontSize:11,fontWeight:600,color:'#c8a84b',fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap',lineHeight:1.6}}>
+                  {sampleDates.length} dep dates · {minDays}–{maxDays}d stay<br/>
+                  <span style={{fontSize:10,color:'#8a6a30'}}>{winStart} → {winEnd}</span>
+                </div>
+              </div>
+
               <div style={{display:'flex',flexDirection:'column',gap:4,marginLeft:8}}>
                 <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>CABIN</label>
                 <div style={{display:'flex',gap:6}}>
