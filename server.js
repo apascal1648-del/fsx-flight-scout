@@ -1,6 +1,6 @@
 /**
- * FSX · Flight Scout — Scraper Server v5
- * Intercepts Google Flights internal JSON API responses instead of DOM parsing
+ * FSX · Flight Scout — Scraper Server v6
+ * Handles EU consent.google.com redirect + form filling
  */
 const express = require('express');
 const cors    = require('cors');
@@ -47,11 +47,9 @@ async function newPage() {
   const ctx = await b.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     locale: 'en-US',
-    timezoneId: 'Europe/Zurich',
+    timezoneId: 'Europe/Amsterdam',
     viewport: { width: 1366, height: 768 },
     extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
-    geolocation: { latitude: 47.37, longitude: 8.54 },  // Zurich
-    permissions: ['geolocation'],
   });
   await ctx.addInitScript(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
@@ -61,120 +59,91 @@ async function newPage() {
   return ctx.newPage();
 }
 
-// ── Parse flights from Google's internal JSON response ──────────────────
-function parseGoogleFlightsJson(raw) {
-  const results = [];
+// Accept Google consent and return to Flights
+async function handleConsent(page) {
+  const url = page.url();
+  if (!url.includes('consent.google.com')) return;
+  console.log('[FSX] Handling consent page…');
+  // Click "Accept all" or "Reject all" (either works to get past it)
   try {
-    // Google wraps with )]}' prefix
-    const clean = raw.replace(/^[^[{]*/, '');
-    const data = JSON.parse(clean);
-    // Recursively find arrays that look like flight data
-    function hunt(obj, depth) {
-      if (depth > 15 || !obj) return;
-      if (Array.isArray(obj)) {
-        obj.forEach(item => hunt(item, depth + 1));
-      } else if (typeof obj === 'object') {
-        // Look for objects with price + airline-like structure
-        const str = JSON.stringify(obj);
-        if (str.length > 200 && str.length < 5000) {
-          // Check for flight characteristics: price numbers, airport codes, times
-          const hasPrice = /[0-9]{3,5}/.test(str);
-          const hasAirport = /[A-Z]{3}/.test(str);
-          if (hasPrice && hasAirport) {
-            // Try to extract price
-            const priceMatch = str.match(/"([0-9]{3,5})"/);
-            if (priceMatch) {
-              results.push({ raw: str.slice(0, 200) });
-            }
-          }
-        }
-        Object.values(obj).forEach(v => hunt(v, depth + 1));
+    // Try "Accept all" first
+    const acceptBtn = page.locator('button').filter({ hasText: /accept all/i }).first();
+    if (await acceptBtn.isVisible({ timeout: 3000 })) {
+      await acceptBtn.click();
+      await page.waitForURL(/google.com\/travel/, { timeout: 15000 });
+      await sleep(2000);
+      console.log('[FSX] Consent accepted, now at:', page.url().slice(0,80));
+      return;
+    }
+  } catch {}
+  // Fallback: find any button and click it
+  try {
+    const btns = await page.locator('button').all();
+    for (const btn of btns) {
+      const txt = (await btn.innerText().catch(() => '')).toLowerCase();
+      if (txt.includes('accept') || txt.includes('agree') || txt.includes('reject')) {
+        await btn.click();
+        await sleep(2000);
+        return;
       }
     }
-    hunt(data, 0);
-  } catch(e) {}
-  return results;
+  } catch {}
 }
 
-// ── Core scraper with response interception ──────────────────────────────
 async function scrapeRoute({ from, to, depart, ret, cabin = 'Business' }) {
   const page = await newPage();
-  const capturedFlights = [];
-  const apiResponses = [];
-
-  // Intercept all responses from Google Flights APIs
-  page.on('response', async (response) => {
-    const url = response.url();
-    // Google Flights data comes from these endpoints
-    if ((url.includes('travel/flights') || url.includes('GetShoppingResults') ||
-         url.includes('FlightSearch') || url.includes('batchexecute') ||
-         url.includes('_/FlightsFrontendUi')) && 
-        response.status() === 200) {
-      try {
-        const ct = response.headers()['content-type'] || '';
-        if (ct.includes('json') || ct.includes('text')) {
-          const text = await response.text();
-          if (text.length > 500) {
-            apiResponses.push({ url: url.slice(0, 100), len: text.length, snippet: text.slice(0, 300) });
-            // Try to extract flight data
-            const flights = extractFlightsFromResponse(text, from, to, depart, ret, cabin);
-            capturedFlights.push(...flights);
-          }
-        }
-      } catch(e) {}
-    }
-  });
-
   try {
-    const cc = cabinCode(cabin);
-    // Load with geolocation set to Zurich to get EUR prices
-    await page.goto('https://www.google.com/travel/flights?hl=en&curr=EUR&gl=CH', {
+    // Go to Google Flights
+    await page.goto('https://www.google.com/travel/flights?hl=en&curr=EUR', {
       waitUntil: 'domcontentloaded', timeout: 30000,
     });
     await sleep(2000);
 
-    // Accept cookies
-    for (const txt of ['Accept all','Reject all','I agree','Tout accepter','Alle akzeptieren']) {
-      try {
-        const btn = page.getByRole('button', { name: txt, exact: true });
-        if (await btn.isVisible({ timeout: 800 })) { await btn.click(); await sleep(1500); break; }
-      } catch {}
+    // Handle EU consent redirect
+    await handleConsent(page);
+
+    // If still on consent page, try again
+    if (page.url().includes('consent')) {
+      await handleConsent(page);
+      await sleep(1000);
     }
 
-    // Fill origin
-    const originInput = page.locator('input[placeholder*="Where from"], input[aria-label*="Where from"]').first();
-    await originInput.click({ delay: 50 }); await sleep(400);
-    await page.keyboard.press('Control+a');
-    for (const ch of from) await page.keyboard.type(ch, { delay: 80 + Math.random()*40 });
-    await sleep(2000);
-    await page.keyboard.press('ArrowDown'); await sleep(300);
-    await page.keyboard.press('Enter'); await sleep(1000);
+    console.log('[FSX] On flights page:', page.url().slice(0,80));
 
-    // Fill destination
-    const destInput = page.locator('input[placeholder*="Where to"], input[aria-label*="Where to"]').first();
-    await destInput.click({ delay: 50 }); await sleep(400);
-    for (const ch of to) await page.keyboard.type(ch, { delay: 80 + Math.random()*40 });
-    await sleep(2000);
-    await page.keyboard.press('ArrowDown'); await sleep(300);
-    await page.keyboard.press('Enter'); await sleep(1000);
-
-    // Switch to Business if needed
+    // Switch to Business
     if (!/economy/i.test(cabin)) {
       try {
         const cabBtn = page.locator('button').filter({ hasText: /^Economy$/ }).first();
         if (await cabBtn.isVisible({ timeout: 2000 })) {
           await cabBtn.click(); await sleep(400);
-          await page.locator('[role="option"], li').filter({ hasText: new RegExp(cabin, 'i') }).first().click();
+          await page.locator('[role="option"], li').filter({ hasText: new RegExp('^'+cabin+'$','i') }).first().click();
           await sleep(400);
         }
       } catch {}
     }
 
+    // Fill origin
+    const originInput = page.locator('input[placeholder*="Where from"], input[aria-label*="Where from"]').first();
+    await originInput.click(); await sleep(400);
+    await page.keyboard.press('Control+a');
+    for (const ch of from) await page.keyboard.type(ch, { delay: 80 });
+    await sleep(2000);
+    await page.keyboard.press('ArrowDown'); await sleep(300);
+    await page.keyboard.press('Enter'); await sleep(800);
+
+    // Fill destination
+    const destInput = page.locator('input[placeholder*="Where to"], input[aria-label*="Where to"]').first();
+    await destInput.click(); await sleep(400);
+    for (const ch of to) await page.keyboard.type(ch, { delay: 80 });
+    await sleep(2000);
+    await page.keyboard.press('ArrowDown'); await sleep(300);
+    await page.keyboard.press('Enter'); await sleep(800);
+
     // Fill depart date
     try {
-      const depInput = page.locator('[aria-label="Departure"], input[placeholder="Departure"]').first();
-      if (await depInput.isVisible({ timeout: 2000 })) {
-        await depInput.click(); await sleep(300);
+      const di = page.locator('[aria-label="Departure"], input[placeholder="Departure"]').first();
+      if (await di.isVisible({ timeout: 2000 })) {
+        await di.click(); await sleep(300);
         await page.keyboard.press('Control+a');
         const d = new Date(depart+'T12:00:00');
         const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -185,9 +154,9 @@ async function scrapeRoute({ from, to, depart, ret, cabin = 'Business' }) {
 
     // Fill return date
     try {
-      const retInput = page.locator('[aria-label="Return"], input[placeholder="Return"]').first();
-      if (await retInput.isVisible({ timeout: 2000 })) {
-        await retInput.click(); await sleep(300);
+      const ri = page.locator('[aria-label="Return"], input[placeholder="Return"]').first();
+      if (await ri.isVisible({ timeout: 2000 })) {
+        await ri.click(); await sleep(300);
         await page.keyboard.press('Control+a');
         const d = new Date(ret+'T12:00:00');
         const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -206,26 +175,16 @@ async function scrapeRoute({ from, to, depart, ret, cabin = 'Business' }) {
     try {
       const sb = page.getByRole('button', { name: /^(Search|Explore)$/i }).last();
       await sb.waitFor({ state: 'visible', timeout: 5000 });
-      await sb.click({ delay: 80 });
+      await sb.click();
     } catch { await page.keyboard.press('Enter'); }
 
-    // Wait for API responses to come in
     await page.waitForLoadState('networkidle', { timeout: 35000 }).catch(() => {});
     await sleep(5000);
 
     const resultUrl = page.url();
-    console.log('[FSX] ' + from + '->' + to + ' url=' + resultUrl.slice(0,80));
-    console.log('[FSX] API responses captured:', apiResponses.length);
-    apiResponses.slice(0,3).forEach(r => console.log(' -', r.url, r.len + 'b'));
+    console.log('[FSX] Results at:', resultUrl.slice(0,80));
 
-    // If API interception got flights, use those
-    if (capturedFlights.length > 0) {
-      console.log('[FSX] Got ' + capturedFlights.length + ' from API interception');
-      return capturedFlights;
-    }
-
-    // Fallback: DOM scraping
-    const domFlights = await page.evaluate(() => {
+    const flights = await page.evaluate(() => {
       const results = [];
       let cards = [];
       const selectors = ['[role="listitem"]','li[data-id]','li[jsname]','.pIav2d'];
@@ -233,7 +192,7 @@ async function scrapeRoute({ from, to, depart, ret, cabin = 'Business' }) {
         const found = [...document.querySelectorAll(sel)].filter(el => {
           const t = el.innerText || '';
           return (t.match(/\d{1,2}:\d{2}/g)||[]).length >= 2 &&
-                 /[0-9]{3,5}/.test(t) && t.length > 50 && t.length < 1500;
+                 /EUR|€/.test(t) && t.length > 50 && t.length < 1500;
         });
         if (found.length > 0) { cards = found.slice(0,12); break; }
       }
@@ -268,8 +227,8 @@ async function scrapeRoute({ from, to, depart, ret, cabin = 'Business' }) {
       return results;
     });
 
-    console.log('[FSX] DOM fallback found ' + domFlights.length + ' flights');
-    return domFlights.map(f => ({
+    console.log('[FSX] Found', flights.length, 'flights for', from, '->', to);
+    return flights.map(f => ({
       from, to, fromCode:from, toCode:to, airline:f.airline,
       dur:f.dur, stops:f.stops, via:f.via, price:f.price, numPrice:f.priceNum,
       dep:fmtDate(depart)+(f.depTime?' '+f.depTime:''),
@@ -277,73 +236,23 @@ async function scrapeRoute({ from, to, depart, ret, cabin = 'Business' }) {
       depDate:depart, retDate:ret, stayLabel:stayDays(depart,ret),
       cabin, real:true, buyUrl:resultUrl,
     }));
-
   } finally { await page.context().close().catch(()=>{}); }
 }
 
-// ── Extract structured flights from Google's JSON response ───────────────
-function extractFlightsFromResponse(raw, from, to, depart, ret, cabin) {
-  const results = [];
-  try {
-    const clean = typeof raw === 'string' ? raw.replace(/^[)\]}'\s]+/, '') : raw;
-    // Google Flights JSON has nested arrays - hunt for flight-shaped data
-    const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
-    
-    // Pattern: price numbers near airport codes
-    const priceMatches = [...text.matchAll(/"(\d{3,5})"/g)];
-    const airportMatches = [...text.matchAll(/"([A-Z]{3})"/g)].map(m=>m[1]).filter(c=>
-      ['ZRH','FRA','CDG','LHR','AMS','VIE','BCN','FCO','NRT','ICN','SIN','BKK','HKG','KUL','PVG','HAN','SGN','MNL','TPE','CGK'].includes(c)
-    );
-    
-    if (priceMatches.length > 0 && airportMatches.length > 0) {
-      console.log('[FSX] JSON has', priceMatches.length, 'prices,', airportMatches.length, 'airports');
-      // Try proper parse
-      try {
-        const data = JSON.parse(clean);
-        const str = JSON.stringify(data);
-        // look for price arrays near departure codes
-        const chunks = str.split('"'+from+'"');
-        chunks.forEach(chunk => {
-          const pm = chunk.match(/"(\d{3,5})"/);
-          if (pm && parseInt(pm[1]) > 200 && parseInt(pm[1]) < 20000) {
-            results.push({
-              from, to, fromCode:from, toCode:to,
-              airline:'See Google Flights', dur:'', stops:0, via:'',
-              price:'EUR '+pm[1], numPrice:parseInt(pm[1]),
-              dep:fmtDate(depart), ret:fmtDate(ret),
-              depDate:depart, retDate:ret, stayLabel:stayDays(depart,ret),
-              cabin, real:true,
-              buyUrl:'https://www.google.com/travel/flights?hl=en&curr=EUR',
-            });
-          }
-        });
-      } catch {}
-    }
-  } catch(e) { console.error('[FSX] JSON parse error:', e.message.slice(0,60)); }
-  return results.slice(0,5);
-}
-
-// ── Debug endpoint ───────────────────────────────────────────────────────
+// ── Debug ────────────────────────────────────────────────────────────────
 app.get('/debug', async (req, res) => {
   const page = await newPage();
-  const responses = [];
-  page.on('response', async (r) => {
-    const url = r.url();
-    if (url.includes('travel') || url.includes('batch') || url.includes('Flight')) {
-      try {
-        const text = await r.text();
-        if (text.length > 200) responses.push({ url: url.slice(0,100), len: text.length, snippet: text.slice(0,200) });
-      } catch {}
-    }
-  });
   try {
-    await page.goto('https://www.google.com/travel/flights?hl=en&curr=EUR&gl=CH', {
-      waitUntil: 'networkidle', timeout: 30000,
+    await page.goto('https://www.google.com/travel/flights?hl=en&curr=EUR', {
+      waitUntil: 'domcontentloaded', timeout: 30000,
     });
-    await sleep(3000);
-    const bodyText = await page.evaluate(() => document.body.innerText.slice(0,2000));
-    const url = page.url();
-    res.json({ url, bodySnippet: bodyText.slice(0,500), apiCalls: responses.slice(0,10) });
+    await sleep(2000);
+    const beforeUrl = page.url();
+    await handleConsent(page);
+    await sleep(2000);
+    const afterUrl  = page.url();
+    const body = await page.evaluate(() => document.body.innerText.slice(0,1000));
+    res.json({ beforeUrl, afterUrl, bodySnippet: body });
   } catch(e) { res.json({ error: e.message }); }
   finally { await page.context().close().catch(()=>{}); }
 });
@@ -360,7 +269,7 @@ const AS_AIRPORTS = [
   {code:'MNL',name:'Manila'},{code:'TPE',name:'Taipei'},{code:'CGK',name:'Jakarta'},
 ];
 
-app.get('/health', (req,res) => res.json({status:'FSX scraper online',version:'5.0'}));
+app.get('/health', (req,res) => res.json({status:'FSX scraper online',version:'6.0'}));
 app.get('/', (req,res) => res.sendFile(path.join(__dirname,'FSX-standalone.html')));
 
 app.get('/scrape', async (req,res) => {
@@ -384,7 +293,7 @@ app.get('/scan', async (req,res) => {
         const results = await scrapeRoute({from:org.code,to:dst.code,depart,ret,cabin});
         results.forEach(r=>{r.from=org.name;r.to=dst.name;});
         all.push(...results);
-        await sleep(2000);
+        await sleep(2500);
       } catch(e) { console.error('[FSX] failed',org.code,'->',dst.code,':',e.message.slice(0,60)); }
     }
   }
@@ -394,4 +303,4 @@ app.get('/scan', async (req,res) => {
   res.json({ok:true,count:all.length,results:all.slice(0,30)});
 });
 
-app.listen(PORT, () => console.log('[FSX] Server v5 on port', PORT));
+app.listen(PORT, () => console.log('[FSX] Server v6 on port', PORT));
