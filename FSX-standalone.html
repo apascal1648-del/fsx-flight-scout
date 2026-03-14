@@ -335,77 +335,70 @@
     function stopScan() { abortRef.current=true; setLoading(false); addLog('✗ Scan stopped by user','err'); }
 
     async function scan() {
-      if (!serverUrl) { setShowServer(true); return; }
-      abortRef.current = false;
-      setLoading(true); setTickets([]); setProg(5);
-
-      const hubsParam  = selHubs.length>0  && selHubs.length<allHubCodes.length  ? selHubs.join(',')  : 'ALL';
-      const destsParam = selDests.length>0 && selDests.length<allDestCodes.length ? selDests.join(',') : 'ALL';
-
-      try {
-      addLog('Starting flexible scan…','sys');
-      addLog(`Depart window: ${winStart} → ${winEnd} (${sampleDates.length} sample dates)`,'sys');
-      addLog(`Stay: ${minDays}–${maxDays} days (avg ${avgStay}d) | ${cabinClass}`,'sys');
-      addLog('Hubs: '+(hubsParam==='ALL'?'All EU hubs':selHubs.join(', ')), 'sys');
-      addLog('Dests: '+(destsParam==='ALL'?'All Asia':selDests.join(', ')), 'sys');
+    if (!serverUrl) { setShowServer(true); return; }
+    abortRef.current = false;
+    setLoading(true);
+    setTickets([]);
+    setProg(5);
+    const hubs  = selHubs.length  > 0 ? selHubs  : allHubCodes;
+    const dests = selDests.length > 0 ? selDests : allDestCodes;
+    const total = hubs.length * dests.length;
+    let done = 0;
+    try {
+      addLog('Starting scan — '+hubs.length+' hubs × '+dests.length+' destinations','sys');
+      addLog('Dep window: '+winStart+' → '+winEnd+' | stay avg '+avgStay+'d | '+cabinClass,'sys');
       setProg(10);
-
       const allResults = [];
-      for (let i=0; i<sampleDates.length; i++) {
+      for (const fromCode of hubs) {
         if (abortRef.current) break;
-        const dep = sampleDates[i];
-        const d = new Date(dep+'T12:00:00'); d.setDate(d.getDate()+avgStay);
-        const ret = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-        addLog(`Scanning dep ${dep} → ret ${ret}…`,'sys');
-        try {
-          const params = new URLSearchParams({ fromCode: hubsParam, toCode: destsParam, depart: dep, ret, cabin: cabinClass });
-          const r = await fetch(`${serverUrl}/scan?${params}`, { mode:'cors' });
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          const data = await r.json();
-          if (data.results) allResults.push(...data.results);
-          addLog(`  → ${data.results?.length||0} flights found`,'ok');
-        } catch(e) {
-          addLog(`  → Error: ${e.message}`,'err');
+        const fromName = EU_HUB_LIST.find(h=>h.code===fromCode)?.name||fromCode;
+        for (const toCode of dests) {
+          if (abortRef.current) break;
+          const toName = AS_AIRPORT_LIST.find(a=>a.code===toCode)?.name||toCode;
+          const dep = winStart;
+          const d = new Date(dep+'T12:00:00'); d.setDate(d.getDate()+avgStay);
+          const ret = d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+          addLog(fromCode+'→'+toCode+' (dep '+dep+')…','sys');
+          try {
+            const url = serverUrl+'/scrape?from='+fromCode+'&to='+toCode+'&depart='+dep+'&ret='+ret+'&cabin='+encodeURIComponent(cabinClass);
+            const r = await fetch(url, {mode:'cors'});
+            if (!r.ok) throw new Error('HTTP '+r.status);
+            const data = await r.json();
+            const res = (data.results||[]).map(x=>({...x,from:fromName,to:toName,fromCode,toCode}));
+            allResults.push(...res);
+            if (res.length > 0) addLog(' → '+res.length+' prices found, best: '+res[0].price,'ok');
+            else addLog(' → no prices found','sys');
+          } catch(e) { addLog(' → '+fromCode+'→'+toCode+': '+e.message.slice(0,50),'err'); }
+          done++;
+          setProg(10+Math.round(done/total*85));
         }
-        setProg(10 + Math.round((i+1)/sampleDates.length*80));
       }
-
-      // Client-side filters
+      // Filter by stops
       let results = allResults;
-        if (selStops.length>0 && selStops.length<3) {
-          results = results.filter(t => {
-            const s = t.stops||0;
-            const bucket = s===0?0:s===1?1:2;
-            return selStops.includes(bucket);
-          });
-        }
-        if (selAirlines.length>0 && selAirlines.length<allAirCodes.length) {
-          results = results.filter(t => {
-            return selAirlines.some(a => t.airline?.includes(a) || t.airlineCode===a);
-          });
-        }
-
-        // Best per route+date combo
-        const bestPerRoute = {};
-        results.forEach(t=>{ const k=(t.fromCode||t.from)+'-'+(t.toCode||t.to)+'-'+(t.depDate||''); if(!bestPerRoute[k]||t.numPrice<bestPerRoute[k].numPrice) bestPerRoute[k]=t; });
-        const top = Object.values(bestPerRoute).sort((a,b)=>(a.numPrice||0)-(b.numPrice||0)).slice(0,30);
-        if(top.length>0) top[0].best=true;
-
-        setTickets(top);
-        setLast(new Date());
-        addLog(`✓ Found ${top.length} best deals from ${results.length} total flights`,'sys');
-        setProg(100);
-        setTimeout(()=>setProg(0),2000);
-    } catch(e) {
-        addLog('Error: '+e.message,'err');
-        if(e.message.includes('Failed to fetch')||e.message.includes('NetworkError'))
-          addLog('Cannot reach scraper — check server URL','err');
-        setProg(0);
+      if (selStops.length>0 && selStops.length<3) {
+        results = results.filter(t=>{const b=(t.stops||0)===0?0:(t.stops||0)===1?1:2;return selStops.includes(b);});
       }
-      setLoading(false);
+      // Best price per route
+      const bestPerRoute = {};
+      results.forEach(t=>{
+        const k=(t.fromCode||t.from)+'-'+(t.toCode||t.to)+'-'+(t.depDate||'');
+        if(!bestPerRoute[k]||t.numPrice<bestPerRoute[k].numPrice) bestPerRoute[k]=t;
+      });
+      const top = Object.values(bestPerRoute).sort((a,b)=>(a.numPrice||0)-(b.numPrice||0)).slice(0,50);
+      if(top.length>0) top[0].best=true;
+      setTickets(top);
+      setLast(new Date());
+      addLog('✓ '+top.length+' deals found ('+results.length+' total prices scanned)','sys');
+      setProg(100);
+      setTimeout(()=>setProg(0),2000);
+    } catch(e) {
+      addLog('Error: '+e.message,'err');
+      setProg(0);
     }
+    setLoading(false);
+  }
 
-    const hubsToShow  = EU_HUB_LIST.filter(h=>selHubs.includes(h.code));
+  const hubsToShow  = EU_HUB_LIST.filter(h=>selHubs.includes(h.code));
     const destsToShow = AS_AIRPORT_LIST.filter(a=>selDests.includes(a.code));
     const isNarrow = selHubs.length<=3 || selDests.length<=3;
 
