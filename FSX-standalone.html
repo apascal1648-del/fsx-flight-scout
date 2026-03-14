@@ -345,64 +345,62 @@
     const total = hubs.length * dests.length;
     let done = 0;
     try {
-      addLog('Starting scan — '+hubs.length+' hubs × '+dests.length+' destinations','sys');
-      addLog('Dep window: '+winStart+' → '+winEnd+' | stay '+minDays+'–'+maxDays+'d | '+cabinClass,'sys');
+      addLog('Scan: ' + hubs.length + ' hubs x ' + dests.length + ' dests', 'sys');
+      addLog(winStart + ' to ' + winEnd + ' | stay ' + minDays + '-' + maxDays + 'd | ' + cabinClass, 'sys');
       setProg(10);
       const allResults = [];
       for (const fromCode of hubs) {
         if (abortRef.current) break;
-        const fromName = EU_HUB_LIST.find(h=>h.code===fromCode)?.name||fromCode;
+        const fromName = EU_HUB_LIST.find(h => h.code === fromCode)?.name || fromCode;
         for (const toCode of dests) {
           if (abortRef.current) break;
-          const toName = AS_AIRPORT_LIST.find(a=>a.code===toCode)?.name||toCode;
-          // depart=winStart, ret=winEnd covers the full departure window
-          // stay=avgStay tells server how many days to estimate return dates
-          const dep = winStart;
-          const ret = winEnd;
-          addLog(fromCode+'→'+toCode+' ('+dep+' → '+ret+')...','sys');
+          const toName = AS_AIRPORT_LIST.find(a => a.code === toCode)?.name || toCode;
+          addLog(fromCode + '->' + toCode + '...', 'sys');
           try {
-            const url = serverUrl+'/scrape'
-              +'?from='+fromCode
-              +'&to='+toCode
-              +'&depart='+dep
-              +'&ret='+ret
-              +'&cabin='+encodeURIComponent(cabinClass)
-              +'&stay='+avgStay;
-            const r = await fetch(url, {mode:'cors'});
-            if (!r.ok) throw new Error('HTTP '+r.status);
+            const scrapeUrl = serverUrl + '/scrape'
+              + '?from=' + fromCode
+              + '&to=' + toCode
+              + '&depart=' + winStart
+              + '&ret=' + winEnd
+              + '&cabin=' + encodeURIComponent(cabinClass)
+              + '&stay=' + avgStay;
+            const r = await fetch(scrapeUrl, { mode: 'cors' });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
             const data = await r.json();
-            const res = (data.results||[]).map(x=>({...x,from:fromName,to:toName,fromCode,toCode}));
+            const res = (data.results || []).map(x => ({ ...x, from: fromName, to: toName, fromCode, toCode }));
             allResults.push(...res);
-            if (res.length > 0) addLog(' → '+res.length+' prices, best: '+res[0].price+' ('+res[0].dep+')', 'ok');
-            else addLog(' → no prices found','sys');
-          } catch(e) { addLog(' → '+fromCode+'→'+toCode+': '+e.message.slice(0,50),'err'); }
+            if (res.length > 0) addLog(' -> ' + res.length + ' prices, best: ' + res[0].price, 'ok');
+            else addLog(' -> none', 'sys');
+          } catch(e) { addLog(fromCode + '->' + toCode + ' err: ' + e.message.slice(0, 40), 'err'); }
           done++;
-          setProg(10+Math.round(done/total*85));
+          setProg(10 + Math.round(done / total * 85));
         }
       }
-      // Filter by stops
       let results = allResults;
-      if (selStops.length>0 && selStops.length<3) {
-        results = results.filter(t=>{const b=(t.stops||0)===0?0:(t.stops||0)===1?1:2;return selStops.includes(b);});
+      if (selStops.length > 0 && selStops.length < 3) {
+        results = results.filter(t => {
+          const b = (t.stops || 0) === 0 ? 0 : (t.stops || 0) === 1 ? 1 : 2;
+          return selStops.includes(b);
+        });
       }
-      // Best price per route
       const bestPerRoute = {};
-      results.forEach(t=>{
-        const k=(t.fromCode||t.from)+'-'+(t.toCode||t.to)+'-'+(t.depDate||'');
-        if(!bestPerRoute[k]||t.numPrice<bestPerRoute[k].numPrice) bestPerRoute[k]=t;
+      results.forEach(t => {
+        const k = (t.fromCode || t.from) + '-' + (t.toCode || t.to) + '-' + (t.depDate || '');
+        if (!bestPerRoute[k] || t.numPrice < bestPerRoute[k].numPrice) bestPerRoute[k] = t;
       });
-      const top = Object.values(bestPerRoute).sort((a,b)=>(a.numPrice||0)-(b.numPrice||0)).slice(0,50);
-      if(top.length>0) top[0].best=true;
+      const top = Object.values(bestPerRoute).sort((a, b) => (a.numPrice || 0) - (b.numPrice || 0)).slice(0, 50);
+      if (top.length > 0) top[0].best = true;
       setTickets(top);
       setLast(new Date());
-      addLog('✓ '+top.length+' deals found ('+results.length+' total)','sys');
+      addLog('Done: ' + top.length + ' deals', 'sys');
       setProg(100);
-      setTimeout(()=>setProg(0),2000);
+      setTimeout(() => setProg(0), 2000);
     } catch(e) {
-      addLog('Error: '+e.message,'err');
+      addLog('Error: ' + e.message, 'err');
       setProg(0);
     }
     setLoading(false);
+  }
   }
 
   rver && <ServerModal onSave={handleServer} initUrl={serverUrl}/>}
