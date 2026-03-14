@@ -346,7 +346,7 @@
     let done = 0;
     try {
       addLog('Starting scan — '+hubs.length+' hubs × '+dests.length+' destinations','sys');
-      addLog('Dep window: '+winStart+' → '+winEnd+' | stay avg '+avgStay+'d | '+cabinClass,'sys');
+      addLog('Dep window: '+winStart+' → '+winEnd+' | stay '+minDays+'–'+maxDays+'d | '+cabinClass,'sys');
       setProg(10);
       const allResults = [];
       for (const fromCode of hubs) {
@@ -355,18 +355,25 @@
         for (const toCode of dests) {
           if (abortRef.current) break;
           const toName = AS_AIRPORT_LIST.find(a=>a.code===toCode)?.name||toCode;
+          // depart=winStart, ret=winEnd covers the full departure window
+          // stay=avgStay tells server how many days to estimate return dates
           const dep = winStart;
-          const d = new Date(dep+'T12:00:00'); d.setDate(d.getDate()+avgStay);
-          const ret = d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
-          addLog(fromCode+'→'+toCode+' (dep '+dep+')…','sys');
+          const ret = winEnd;
+          addLog(fromCode+'→'+toCode+' ('+dep+' → '+ret+')...','sys');
           try {
-            const url = serverUrl+'/scrape?from='+fromCode+'&to='+toCode+'&depart='+dep+'&ret='+ret+'&cabin='+encodeURIComponent(cabinClass);
+            const url = serverUrl+'/scrape'
+              +'?from='+fromCode
+              +'&to='+toCode
+              +'&depart='+dep
+              +'&ret='+ret
+              +'&cabin='+encodeURIComponent(cabinClass)
+              +'&stay='+avgStay;
             const r = await fetch(url, {mode:'cors'});
             if (!r.ok) throw new Error('HTTP '+r.status);
             const data = await r.json();
             const res = (data.results||[]).map(x=>({...x,from:fromName,to:toName,fromCode,toCode}));
             allResults.push(...res);
-            if (res.length > 0) addLog(' → '+res.length+' prices found, best: '+res[0].price,'ok');
+            if (res.length > 0) addLog(' → '+res.length+' prices, best: '+res[0].price+' ('+res[0].dep+')', 'ok');
             else addLog(' → no prices found','sys');
           } catch(e) { addLog(' → '+fromCode+'→'+toCode+': '+e.message.slice(0,50),'err'); }
           done++;
@@ -388,7 +395,7 @@
       if(top.length>0) top[0].best=true;
       setTickets(top);
       setLast(new Date());
-      addLog('✓ '+top.length+' deals found ('+results.length+' total prices scanned)','sys');
+      addLog('✓ '+top.length+' deals found ('+results.length+' total)','sys');
       setProg(100);
       setTimeout(()=>setProg(0),2000);
     } catch(e) {
@@ -398,13 +405,7 @@
     setLoading(false);
   }
 
-  const hubsToShow  = EU_HUB_LIST.filter(h=>selHubs.includes(h.code));
-    const destsToShow = AS_AIRPORT_LIST.filter(a=>selDests.includes(a.code));
-    const isNarrow = selHubs.length<=3 || selDests.length<=3;
-
-    return (
-      <div style={{minHeight:'100vh',background:'#0a0a0a',paddingBottom:60}}>
-        {showServer && <ServerModal onSave={handleServer} initUrl={serverUrl}/>}
+  rver && <ServerModal onSave={handleServer} initUrl={serverUrl}/>}
         <div style={{maxWidth:1020,margin:'0 auto',padding:'40px 24px 60px'}}>
 
           {/* Header */}
