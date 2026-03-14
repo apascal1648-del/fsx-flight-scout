@@ -1,7 +1,7 @@
 /**
- * FSX Flight Scout v12
- * Fix: cabin button on Google Flights is the "1" (passengers) button
- * Clicking it opens a modal with both passengers + cabin class selectors
+ * FSX Flight Scout v13
+ * CONFIRMED FIX: cabin selector is div[role="combobox"].VfPpkd-TkwUic containing "Economy"
+ * Options are li[role="option"] after clicking it
  */
 const express = require('express');
 const cors = require('cors');
@@ -55,90 +55,32 @@ async function handleConsent(page) {
   try { for(const b of await page.locator('button').all()){const t=(await b.innerText().catch(()=>'')).toLowerCase();if(t.includes('accept')||t.includes('agree')||t.includes('reject')){await b.click();await sleep(2000);return;}}} catch {}
 }
 
-// Switch cabin class
-// The Google Flights cabin button shows "1" (passenger count) — clicking it
-// opens a dropdown/modal with cabin class options
+// CONFIRMED: cabin dropdown is div[role="combobox"] containing "Economy" text
+// Options are li[role="option"] with exact text: Economy, Premium economy, Business, First
 async function switchCabin(page, cabin) {
   if (/economy/i.test(cabin)) return true;
-  console.log('[FSX] Switching cabin to', cabin);
+  console.log('[FSX] Switching to', cabin);
   try {
-    // The passengers+cabin button has aria-label containing "passengers" or shows just the number
-    // Try multiple selectors to find it
-    let opened = false;
-
-    // Strategy 1: aria-label containing "passenger" or "class"
-    for (const sel of [
-      '[aria-label*="passenger" i]',
-      '[aria-label*="cabin" i]',
-      '[aria-label*="class" i]',
-      '[data-ved] button:has-text("1")',
-    ]) {
-      try {
-        const el = page.locator(sel).first();
-        if (await el.isVisible({timeout:800})) {
-          await el.click(); await sleep(800); opened = true;
-          console.log('[FSX] Opened via selector:', sel); break;
-        }
-      } catch {}
-    }
-
-    // Strategy 2: find button with exact text "1" (the passengers button)
-    if (!opened) {
-      const buttons = await page.locator('button').all();
-      for (const btn of buttons) {
-        const txt = (await btn.innerText().catch(()=>'')).trim();
-        if (txt === '1') {
-          await btn.click(); await sleep(800); opened = true;
-          console.log('[FSX] Opened via "1" button'); break;
-        }
-      }
-    }
-
-    if (!opened) { console.log('[FSX] Could not open cabin dropdown'); return false; }
-
-    // Now look for cabin class options in the opened dropdown/modal
-    // Options could be radio buttons, list items, or buttons
-    for (const sel of [
-      '[role="radio"]',
-      '[role="option"]',
-      'li[data-value]',
-      '.cabin-class-option',
-    ]) {
-      const opts = await page.locator(sel).all();
-      for (const opt of opts) {
-        const txt = await opt.innerText().catch(() => '');
-        if (new RegExp(cabin, 'i').test(txt)) {
-          await opt.click(); await sleep(500);
-          console.log('[FSX] Cabin option clicked:', txt.trim());
-          // Click Done to confirm
-          try {
-            const done = page.getByRole('button', {name:'Done'}).first();
-            if (await done.isVisible({timeout:1500})) { await done.click(); await sleep(400); }
-          } catch {}
-          return true;
-        }
-      }
-    }
-
-    // Fallback: look for any element containing cabin name
-    const allEls = await page.locator('*').all();
-    for (const el of allEls.slice(0, 200)) {
-      try {
-        const txt = await el.innerText().catch(() => '');
-        const tag = await el.evaluate(e => e.tagName).catch(() => '');
-        if (new RegExp('^\\s*' + cabin + '\\s*$', 'i').test(txt) && ['LI','BUTTON','SPAN','DIV'].includes(tag)) {
-          await el.click(); await sleep(500);
-          console.log('[FSX] Cabin fallback clicked:', txt.trim(), tag);
-          try { const done=page.getByRole('button',{name:'Done'}).first(); if(await done.isVisible({timeout:1500})){await done.click();await sleep(400);} } catch {}
-          return true;
-        }
-      } catch {}
-    }
-
-    console.log('[FSX] cabin option not found after opening dropdown');
-    // Close the dropdown
-    await page.keyboard.press('Escape');
-    return false;
+    // Click the combobox that currently shows "Economy"
+    const switched = await page.evaluate(async (targetCabin) => {
+      // Find the cabin combobox (has role=combobox and contains "Economy" text)
+      const combos = [...document.querySelectorAll('[role="combobox"]')];
+      const cabinCombo = combos.find(el => /economy/i.test(el.innerText || ''));
+      if (!cabinCombo) return {ok:false, reason:'no combobox with Economy text'};
+      cabinCombo.click();
+      // Wait a bit for dropdown to open
+      await new Promise(r => setTimeout(r, 600));
+      // Find the target option
+      const opts = [...document.querySelectorAll('li[role="option"]')];
+      const target = opts.find(el => new RegExp('^\\s*' + targetCabin + '\\s*$', 'i').test(el.innerText || ''));
+      if (!target) return {ok:false, reason:'option not found', available: opts.map(o=>o.innerText.trim())};
+      target.click();
+      return {ok:true, clicked: target.innerText.trim()};
+    }, cabin);
+    
+    console.log('[FSX] switchCabin result:', JSON.stringify(switched));
+    await sleep(400);
+    return switched.ok === true;
   } catch(e) {
     console.log('[FSX] switchCabin error:', e.message.slice(0,60));
     return false;
@@ -174,7 +116,7 @@ function extractFromDateGrid(text, from, to, depart, ret, cabin, cabinSwitched, 
       }
     }
   }
-  console.log('[FSX]',from,'->',to,'grid prices:',datePrices.length,'| cabinOk:',cabinSwitched);
+  console.log('[FSX]',from,'->',to,'prices:',datePrices.length,'| cabinOk:',cabinSwitched);
   if(!datePrices.length) return [];
   datePrices.sort((a,b)=>a.price-b.price);
   const actualCabin = cabinSwitched ? cabin : 'Economy*';
@@ -194,72 +136,30 @@ async function scrapeRoute({ from, to, depart, ret, cabin='Business' }) {
   try {
     await goToFlights(page);
     const cabinOk = await switchCabin(page, cabin);
-
-    // Fill origin
     const oi=page.locator('input[placeholder*="Where from"],input[aria-label*="Where from"]').first();
     await oi.click();await sleep(300);await page.keyboard.press('Control+a');
     for(const ch of from)await page.keyboard.type(ch,{delay:80});
     await sleep(2000);await page.keyboard.press('ArrowDown');await sleep(300);await page.keyboard.press('Enter');await sleep(800);
-
-    // Fill destination
     const di=page.locator('input[placeholder*="Where to"],input[aria-label*="Where to"]').first();
     await di.click();await sleep(300);
     for(const ch of to)await page.keyboard.type(ch,{delay:80});
     await sleep(2000);await page.keyboard.press('ArrowDown');await sleep(300);await page.keyboard.press('Enter');await sleep(800);
-
-    // Search
     await page.keyboard.press('Escape');await sleep(300);
     try{const sb=page.getByRole('button',{name:/^(Search|Explore)$/i}).last();await sb.waitFor({state:'visible',timeout:5000});await sb.click();}catch{await page.keyboard.press('Enter');}
-
-    // Wait for date grid
     try{await page.waitForFunction(()=>(document.body.innerText.match(/€\d{3,5}/g)||[]).length>=5,{timeout:30000,polling:1500});}catch{}
     await sleep(1000);
-
     const resultUrl=page.url();
     const pageText=await page.evaluate(()=>document.body.innerText);
     const flights=extractFromDateGrid(pageText,from,to,depart,ret,cabin,cabinOk,resultUrl);
-    console.log('[FSX] Found',flights.length,'prices for',from,'->',to,'| cabinOk:',cabinOk);
+    console.log('[FSX] Found',flights.length,'prices,',from,'->',to,'cabinOk:',cabinOk);
     return flights;
   } finally { await page.context().close().catch(()=>{}); }
 }
 
-app.get('/peek', async (req,res) => {
-  const {from='ZRH',to='SIN',depart='2027-02-01',ret='2027-05-01',cabin='Business'} = req.query;
-  const page = await newPage();
-  try {
-    await goToFlights(page);
-    // Log all interactive elements and their aria-labels
-    const info = await page.evaluate(() => {
-      const btns = [...document.querySelectorAll('button,[role=button]')];
-      return btns.slice(0,30).map(b=>({tag:b.tagName,text:(b.innerText||'').slice(0,30),aria:(b.getAttribute('aria-label')||'').slice(0,40)}));
-    });
-    console.log('[FSX] Interactive elements:', JSON.stringify(info));
-    const cabinOk = await switchCabin(page, cabin);
-    const oi=page.locator('input[placeholder*="Where from"],input[aria-label*="Where from"]').first();
-    await oi.click();await sleep(300);await page.keyboard.press('Control+a');
-    for(const ch of from)await page.keyboard.type(ch,{delay:80});
-    await sleep(2000);await page.keyboard.press('ArrowDown');await sleep(300);await page.keyboard.press('Enter');await sleep(800);
-    const di=page.locator('input[placeholder*="Where to"],input[aria-label*="Where to"]').first();
-    await di.click();await sleep(300);
-    for(const ch of to)await page.keyboard.type(ch,{delay:80});
-    await sleep(2000);await page.keyboard.press('ArrowDown');await sleep(300);await page.keyboard.press('Enter');await sleep(800);
-    await page.keyboard.press('Escape');await sleep(300);
-    try{const sb=page.getByRole('button',{name:/^(Search|Explore)$/i}).last();await sb.waitFor({state:'visible',timeout:5000});await sb.click();}catch{await page.keyboard.press('Enter');}
-    try{await page.waitForFunction(()=>(document.body.innerText.match(/€\d{3,5}/g)||[]).length>=5,{timeout:25000,polling:1500});}catch{}
-    await sleep(1000);
-    const url=page.url();
-    const text=await page.evaluate(()=>document.body.innerText);
-    const flights=extractFromDateGrid(text,from,to,depart,ret,cabin,cabinOk,url);
-    res.json({url,cabinSwitched:cabinOk,interactiveElements:info,flightsFound:flights.length,flights:flights.slice(0,2)});
-  } catch(e){res.json({error:e.message});}
-  finally{await page.context().close().catch(()=>{});}
-});
-
 const EU_HUBS=[{code:'ZRH',name:'Zurich'},{code:'FRA',name:'Frankfurt'},{code:'CDG',name:'Paris'},{code:'LHR',name:'London'},{code:'AMS',name:'Amsterdam'},{code:'VIE',name:'Vienna'},{code:'BCN',name:'Barcelona'},{code:'FCO',name:'Rome'}];
 const AS_AIRPORTS=[{code:'NRT',name:'Tokyo'},{code:'ICN',name:'Seoul'},{code:'SIN',name:'Singapore'},{code:'BKK',name:'Bangkok'},{code:'HKG',name:'Hong Kong'},{code:'KUL',name:'Kuala Lumpur'},{code:'PVG',name:'Shanghai'},{code:'HAN',name:'Hanoi'},{code:'SGN',name:'Ho Chi Minh'},{code:'MNL',name:'Manila'},{code:'TPE',name:'Taipei'},{code:'CGK',name:'Jakarta'}];
-app.get('/health',(req,res)=>res.json({status:'FSX scraper online',version:'12.0'}));
+app.get('/health',(req,res)=>res.json({status:'FSX scraper online',version:'13.0'}));
 app.get('/',(req,res)=>res.sendFile(path.join(__dirname,'FSX-standalone.html')));
-app.get('/debug',(req,res)=>res.json({note:'Use /peek?from=ZRH&to=SIN&cabin=Business'}));
 app.get('/scrape',async(req,res)=>{
   const{from,to,depart,ret,cabin='Business'}=req.query;
   if(!from||!to||!depart||!ret)return res.status(400).json({error:'from,to,depart,ret required'});
@@ -277,4 +177,4 @@ app.get('/scan',async(req,res)=>{
   const seen={};all.forEach(r=>{const k=r.fromCode+'-'+r.toCode;if(!seen[k]){r.best=true;seen[k]=true;}});
   res.json({ok:true,count:all.length,results:all.slice(0,50)});
 });
-app.listen(PORT,()=>console.log('[FSX] Server v12 on port',PORT));
+app.listen(PORT,()=>console.log('[FSX] Server v13 on port',PORT));
