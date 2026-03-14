@@ -335,75 +335,107 @@
     function stopScan() { abortRef.current=true; setLoading(false); addLog('✗ Scan stopped by user','err'); }
 
     async function scan() {
-    if (!serverUrl) { setShowServer(true); return; }
-    abortRef.current = false;
-    setLoading(true);
-    setTickets([]);
-    setProg(5);
-    const hubs  = selHubs.length  > 0 ? selHubs  : allHubCodes;
-    const dests = selDests.length > 0 ? selDests : allDestCodes;
-    const total = hubs.length * dests.length;
-    let done = 0;
-    try {
-      addLog('Scan: ' + hubs.length + ' hubs x ' + dests.length + ' dests', 'sys');
-      addLog(winStart + ' to ' + winEnd + ' | stay ' + minDays + '-' + maxDays + 'd | ' + cabinClass, 'sys');
-      setProg(10);
-      const allResults = [];
-      for (const fromCode of hubs) {
-        if (abortRef.current) break;
-        const fromName = EU_HUB_LIST.find(h => h.code === fromCode)?.name || fromCode;
-        for (const toCode of dests) {
-          if (abortRef.current) break;
-          const toName = AS_AIRPORT_LIST.find(a => a.code === toCode)?.name || toCode;
-          addLog(fromCode + '->' + toCode + '...', 'sys');
-          try {
-            const scrapeUrl = serverUrl + '/scrape'
-              + '?from=' + fromCode
-              + '&to=' + toCode
-              + '&depart=' + winStart
-              + '&ret=' + winEnd
-              + '&cabin=' + encodeURIComponent(cabinClass)
-              + '&stay=' + avgStay;
-            const r = await fetch(scrapeUrl, { mode: 'cors' });
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            const data = await r.json();
-            const res = (data.results || []).map(x => ({ ...x, from: fromName, to: toName, fromCode, toCode }));
-            allResults.push(...res);
-            if (res.length > 0) addLog(' -> ' + res.length + ' prices, best: ' + res[0].price, 'ok');
-            else addLog(' -> none', 'sys');
-          } catch(e) { addLog(fromCode + '->' + toCode + ' err: ' + e.message.slice(0, 40), 'err'); }
-          done++;
-          setProg(10 + Math.round(done / total * 85));
-        }
-      }
-      let results = allResults;
-      if (selStops.length > 0 && selStops.length < 3) {
-        results = results.filter(t => {
-          const b = (t.stops || 0) === 0 ? 0 : (t.stops || 0) === 1 ? 1 : 2;
-          return selStops.includes(b);
-        });
-      }
-      const bestPerRoute = {};
-      results.forEach(t => {
-        const k = (t.fromCode || t.from) + '-' + (t.toCode || t.to) + '-' + (t.depDate || '');
-        if (!bestPerRoute[k] || t.numPrice < bestPerRoute[k].numPrice) bestPerRoute[k] = t;
-      });
-      const top = Object.values(bestPerRoute).sort((a, b) => (a.numPrice || 0) - (b.numPrice || 0)).slice(0, 50);
-      if (top.length > 0) top[0].best = true;
-      setTickets(top);
-      setLast(new Date());
-      addLog('Done: ' + top.length + ' deals', 'sys');
-      setProg(100);
-      setTimeout(() => setProg(0), 2000);
-    } catch(e) {
-      addLog('Error: ' + e.message, 'err');
-      setProg(0);
-    }
-    setLoading(false);
-  }
-  }
+      if (!serverUrl) { setShowServer(true); return; }
+      abortRef.current = false;
+      setLoading(true); setTickets([]); setProg(5);
 
-  rver && <ServerModal onSave={handleServer} initUrl={serverUrl}/>}
+      const hubs  = selHubs.length  > 0 ? selHubs  : allHubCodes;
+      const dests = selDests.length > 0 ? selDests : allDestCodes;
+      const total = hubs.length * dests.length;
+      let done = 0;
+
+      try {
+        addLog('Scan: ' + hubs.length + ' hubs x ' + dests.length + ' dests', 'sys');
+        addLog('Dep window: ' + winStart + ' to ' + winEnd + ' | stay ' + minDays + '-' + maxDays + 'd | ' + cabinClass, 'sys');
+        setProg(10);
+        const allResults = [];
+
+        for (const fromCode of hubs) {
+          if (abortRef.current) break;
+          const fromName = EU_HUB_LIST.find(h => h.code === fromCode)?.name || fromCode;
+          for (const toCode of dests) {
+            if (abortRef.current) break;
+            const toName = AS_AIRPORT_LIST.find(a => a.code === toCode)?.name || toCode;
+            addLog(fromCode + '->' + toCode + '...', 'sys');
+            try {
+              const scrapeUrl = serverUrl + '/scrape'
+                + '?from=' + fromCode
+                + '&to=' + toCode
+                + '&depart=' + winStart
+                + '&ret=' + winEnd
+                + '&cabin=' + encodeURIComponent(cabinClass)
+                + '&stay=' + avgStay;
+              const r = await fetch(scrapeUrl, { mode: 'cors' });
+              if (!r.ok) throw new Error('HTTP ' + r.status);
+              const data = await r.json();
+              const res = (data.results || []).map(x => ({ ...x, from: fromName, to: toName, fromCode, toCode }));
+              allResults.push(...res);
+              if (res.length > 0) addLog(' -> ' + res.length + ' prices, best: ' + res[0].price, 'ok');
+              else addLog(' -> none', 'sys');
+            } catch(scanErr) { addLog(fromCode + '->' + toCode + ': ' + scanErr.message.slice(0, 40), 'err'); }
+            done++;
+            setProg(10 + Math.round(done / total * 85));
+          }
+        }
+
+        let results = allResults;
+        if (selStops.length > 0 && selStops.length < 3) {
+          results = results.filter(t => {
+            const bucket = (t.stops || 0) === 0 ? 0 : (t.stops || 0) === 1 ? 1 : 2;
+            return selStops.includes(bucket);
+          });
+        }
+        const bestPerRoute = {};
+        results.forEach(t => {
+          const k = (t.fromCode || t.from) + '-' + (t.toCode || t.to) + '-' + (t.depDate || '');
+          if (!bestPerRoute[k] || t.numPrice < bestPerRoute[k].numPrice) bestPerRoute[k] = t;
+        });
+        const top = Object.values(bestPerRoute)
+          .sort((a, b) => (a.numPrice || 0) - (b.numPrice || 0))
+          .slice(0, 50);
+        if (top.length > 0) top[0].best = true;
+        setTickets(top);
+        setLast(new Date());         } catch(scanErr) { addLog(fromCode + '->' + toCode + ': ' + scanErr.message.slice(0, 40), 'err'); }
+            done++;
+            setProg(10 + Math.round(done / total * 85));
+          }
+        }
+
+        let results = allResults;
+        if (selStops.length > 0 && selStops.length < 3) {
+          results = results.filter(t => {
+            const bucket = (t.stops || 0) === 0 ? 0 : (t.stops || 0) === 1 ? 1 : 2;
+            return selStops.includes(bucket);
+          });
+        }
+        const bestPerRoute = {};
+        results.forEach(t => {
+          const k = (t.fromCode || t.from) + '-' + (t.toCode || t.to) + '-' + (t.depDate || '');
+          if (!bestPerRoute[k] || t.numPrice < bestPerRoute[k].numPrice) bestPerRoute[k] = t;
+        });
+        const top = Object.values(bestPerRoute)
+          .sort((a, b) => (a.numPrice || 0) - (b.numPrice || 0))
+          .slice(0, 50);
+        if (top.length > 0) top[0].best = true;
+        setTickets(top);
+        setLast(new Date());
+        addLog('Done: ' + top.length + ' deals (' + results.length + ' total)', 'sys');
+        setProg(100);
+        setTimeout(() => setProg(0), 2000);
+      } catch(topErr) {
+        addLog('Error: ' + topErr.message, 'err');
+        setProg(0);
+      }
+      setLoading(false);
+    }
+
+    const hubsToShow  = EU_HUB_LIST.filter(h=>selHubs.includes(h.code));
+    const destsToShow = AS_AIRPORT_LIST.filter(a=>selDests.includes(a.code));
+    const isNarrow = selHubs.length<=3 || selDests.length<=3;
+
+    return (
+      <div style={{minHeight:'100vh',background:'#0a0a0a',paddingBottom:60}}>
+        {showServer && <ServerModal onSave={handleServer} initUrl={serverUrl}/>}
         <div style={{maxWidth:1020,margin:'0 auto',padding:'40px 24px 60px'}}>
 
           {/* Header */}
@@ -471,11 +503,11 @@
                     <a href={makeGFExplore(hub.code)} target="_blank" rel="noopener noreferrer"
                       style={{display:'inline-flex',alignItems:'center',gap:4,background:'rgba(66,133,244,.08)',border:'1px solid rgba(66,133,244,.25)',color:'#7aacf8',textDecoration:'none',padding:'3px 10px',borderRadius:3,fontSize:10,fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap'}}
                       onMouseEnter={e=>e.currentTarget.style.background='rgba(66,133,244,.15)'}
-                      onMouseLeave={e=>e.currentTarget.style.background='rgba(66,133,244,.08)'}>🗺 Google Explore</a>
+                      onMouseLeave={e=>e.currentTarget.style.background='rgba(66,133,244,.08)'}> Google Explore</a>
                     <a href={makeKayakExplore(hub.code)} target="_blank" rel="noopener noreferrer"
                       style={{display:'inline-flex',alignItems:'center',gap:4,background:'rgba(255,100,0,.06)',border:'1px solid rgba(255,100,0,.2)',color:'#e07840',textDecoration:'none',padding:'3px 10px',borderRadius:3,fontSize:10,fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap'}}
                       onMouseEnter={e=>e.currentTarget.style.background='rgba(255,100,0,.12)'}
-                      onMouseLeave={e=>e.currentTarget.style.background='rgba(255,100,0,.06)'}>🔍 Kayak Explore</a>
+                      onMouseLeave={e=>e.currentTarget.style.background='rgba(255,100,0,.06)'}> Kayak Explore</a>
                     <a href={makeSkyscanner(hub.code)} target="_blank" rel="noopener noreferrer"
                       style={{display:'inline-flex',alignItems:'center',gap:4,background:'rgba(0,157,224,.06)',border:'1px solid rgba(0,157,224,.2)',color:'#4ab8e8',textDecoration:'none',padding:'3px 10px',borderRadius:3,fontSize:10,fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap'}}
                       onMouseEnter={e=>e.currentTarget.style.background='rgba(0,157,224,.12)'}
@@ -535,7 +567,7 @@
                 <div style={{fontSize:9,color:'#333',fontFamily:"'DM Mono',monospace",textTransform:'uppercase',letterSpacing:1}}>SCAN MODE</div>
                 <div style={{display:'flex',gap:6,alignItems:'center'}}>
                   <button onClick={()=>setPreciseMode(false)} style={{background:!preciseMode?'linear-gradient(135deg,#c8a84b,#8a6a10)':'transparent',border:!preciseMode?'none':'1.5px solid #2a2a2a',color:!preciseMode?'#0a0a0a':'#555',borderRadius:4,padding:'7px 14px',fontSize:10,fontWeight:!preciseMode?800:400,letterSpacing:1,fontFamily:"'DM Mono',monospace",cursor:'pointer',transition:'all .2s'}}>⚡ FAST</button>
-                  <button onClick={()=>setPreciseMode(true)}  style={{background:preciseMode?'linear-gradient(135deg,#e05555,#8a1010)':'transparent',border:preciseMode?'none':'1.5px solid #2a2a2a',color:preciseMode?'#fff':'#555',borderRadius:4,padding:'7px 14px',fontSize:10,fontWeight:preciseMode?800:400,letterSpacing:1,fontFamily:"'DM Mono',monospace",cursor:'pointer',transition:'all .2s'}}>🔍 PRECISE</button>
+                  <button onClick={()=>setPreciseMode(true)}  style={{background:preciseMode?'linear-gradient(135deg,#e05555,#8a1010)':'transparent',border:preciseMode?'none':'1.5px solid #2a2a2a',color:preciseMode?'#fff':'#555',borderRadius:4,padding:'7px 14px',fontSize:10,fontWeight:preciseMode?800:400,letterSpacing:1,fontFamily:"'DM Mono',monospace",cursor:'pointer',transition:'all .2s'}}> PRECISE</button>
                 </div>
                 <div style={{background: preciseMode?'rgba(224,85,85,.08)':'rgba(200,168,75,.08)', border:`1px solid ${preciseMode?'rgba(224,85,85,.25)':'rgba(200,168,75,.2)'}`,borderRadius:4,padding:'8px 14px',fontSize:11,fontWeight:600,color:preciseMode?'#e07070':'#c8a84b',fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap',lineHeight:1.7}}>
                   {sampleDates.length} dep dates · {minDays}–{maxDays}d stay<br/>
@@ -568,7 +600,7 @@
             <div className="section-div"/>
 
             {/* Airlines */}
-            <div>
+           <div>
               <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
                 <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>AIRLINES</label>
                 <span style={{fontSize:10,color:'#444',fontFamily:"'DM Mono',monospace"}}>{selAirlines.length===allAirCodes.length?'all airlines':selAirlines.length+' selected'}</span>
