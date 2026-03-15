@@ -97,8 +97,8 @@ function isoToDisp(iso) {
 
 // Build direct Google Flights URL for a specific date + route + cabin
 function buildGoogleFlightsUrl(from, to, depIso, retIso, cabin) {
-  const cabinQ = /business/i.test(cabin) ? 'business' : /first/i.test(cabin) ? 'first' : 'economy';
-  return `https://www.google.com/travel/flights?hl=en&curr=EUR&q=flights+from+${from}+to+${to}+on+${depIso}+returning+${retIso}&cabinclass=${cabinQ}`;
+  const e = /business/i.test(cabin) ? 2 : /first/i.test(cabin) ? 3 : 1;
+  return `https://www.google.com/travel/flights?hl=en&curr=EUR#flt=${from}.${to}.${depIso}*${to}.${from}.${retIso};c:EUR;e:${e};sd:1;t:f`;
 }
 
 // Parse date grid from page text (proven working)
