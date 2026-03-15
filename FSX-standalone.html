@@ -233,7 +233,7 @@
               <div style={{fontSize:9,color:'#444',fontFamily:mono,marginTop:3,letterSpacing:1}}>ROUND TRIP</div>
             </div>
             <div style={{display:'flex',flexDirection:'column',gap:6,alignItems:'flex-end',flexShrink:0}}>
-              <a href={'https://www.google.com/travel/flights?hl=en&curr=EUR#flt='+t.fromCode+'.'+t.toCode+'.'+(t.depDate?t.depDate.slice(2).replace(/-/g,''):'')+`*`+t.toCode+'.'+t.fromCode+'.'+(t.retDate?t.retDate.slice(2).replace(/-/g,''):'')+';c:EUR;e:'+(/business/i.test(t.cabin||'')?'2':/first/i.test(t.cabin||'')?'3':'1')+';sd:1;t:f'} target="_blank" rel="noopener noreferrer"
+              <a href={'https://www.google.com/travel/flights?hl=en&curr=EUR#flt='+t.fromCode+'.'+t.toCode+'.'+t.depDate+'*'+t.toCode+'.'+t.fromCode+'.'+t.retDate+';c:EUR;e:'+(/business/i.test(t.cabin||'')?'2':/first/i.test(t.cabin||'')?'3':'1')+';sd:1;t:f'} target="_blank" rel="noopener noreferrer"
                 style={{display:'inline-flex',alignItems:'center',gap:5,background:'linear-gradient(135deg,#c8a84b,#8a6a10)',color:'#0a0a0a',textDecoration:'none',padding:'9px 16px',borderRadius:4,fontSize:11,fontWeight:700,letterSpacing:1.5,fontFamily:mono,transition:'all .15s',whiteSpace:'nowrap'}}
                 onMouseEnter={e=>e.currentTarget.style.filter='brightness(1.15)'}
                 onMouseLeave={e=>e.currentTarget.style.filter='none'}>
