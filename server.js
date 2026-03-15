@@ -1,8 +1,10 @@
 /**
- * FSX Flight Scout v17b
- * Adds /debug endpoint — returns screenshot + page text so we can see
- * exactly what Google shows the scraper on Railway.
- * Based on v14's proven date grid approach.
+ * FSX Flight Scout v18
+ * Grid parsing works (v17b proved it).
+ * This version fixes the results page parser:
+ * - Much more flexible time pattern matching
+ * - Logs the full results page text to Railway so we can see the exact format
+ * - Always falls back to grid prices if parsing fails
  */
 const express = require('express');
 const cors = require('cors');
@@ -163,9 +165,15 @@ async function clickCheapestDate(page, datePrices) {
   return null;
 }
 
+/**
+ * Parse flight results from page text.
+ * Logs the raw text to Railway so we can debug the format.
+ * Uses a very flexible approach — scan for any two time-like tokens separated by a dash/arrow.
+ */
 function parseFlightResultsFromText(text) {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   const results = [];
+
   const knownAirlines = [
     'Qatar Airways','Emirates','Etihad Airways','Etihad','Turkish Airlines',
     'Singapore Airlines','Cathay Pacific','Lufthansa','Swiss','SWISS',
@@ -177,16 +185,41 @@ function parseFlightResultsFromText(text) {
     'Saudia','Air India','IndiGo','flydubai','Air Arabia',
   ];
 
+  // Time pattern: "10:15 AM", "10:15", "10:15 PM"
+  const timeRe = /\d{1,2}:\d{2}(?:\s*[AP]M)?/i;
+
   for (let i = 0; i < lines.length - 3; i++) {
     const line = lines[i];
-    const timeMatch = line.match(
+
+    // Strategy 1: "10:15 AM – 7:30 AM+1" on one line
+    const oneLine = line.match(
       /^(\d{1,2}:\d{2}(?:\s*[AP]M)?)\s*[–\-—]\s*(\d{1,2}:\d{2}(?:\s*[AP]M)?)(\+\d)?$/i
     );
-    if (!timeMatch) continue;
 
-    const depTime = timeMatch[1].trim();
-    const arrTime = timeMatch[2].trim() + (timeMatch[3] || '');
+    // Strategy 2: a line that is just a time "10:15 AM" followed by another time nearby
+    const justTime = line.match(/^(\d{1,2}:\d{2}(?:\s*[AP]M)?)$/i);
 
+    let depTime = '', arrTime = '';
+
+    if (oneLine) {
+      depTime = oneLine[1].trim();
+      arrTime = oneLine[2].trim() + (oneLine[3] || '');
+    } else if (justTime) {
+      // Look at next few lines for another time
+      for (let k = i + 1; k < Math.min(i + 4, lines.length); k++) {
+        const next = lines[k];
+        const nextTime = next.match(/^(\d{1,2}:\d{2}(?:\s*[AP]M)?)(\+\d)?$/i);
+        if (nextTime) {
+          depTime = justTime[1].trim();
+          arrTime = nextTime[1].trim() + (nextTime[2] || '');
+          break;
+        }
+      }
+    }
+
+    if (!depTime) continue;
+
+    // Search backwards up to 6 lines for airline
     let airline = '';
     for (let j = Math.max(0, i - 6); j < i; j++) {
       const l = lines[j];
@@ -198,34 +231,83 @@ function parseFlightResultsFromText(text) {
     if (!airline) {
       for (let j = Math.max(0, i - 4); j < i; j++) {
         const l = lines[j];
-        if (l.length >= 3 && l.length <= 60 && /[A-Za-z]{3}/.test(l) &&
-            !/^\d|€|\$|nonstop|direct|stop|hr|min|\d:\d|\+\d|Economy|Business|First|Select|Book|More|Carbon|Wi-Fi|USB/i.test(l) &&
-            !/\b(ZRH|FRA|CDG|LHR|AMS|VIE|BCN|FCO|NRT|ICN|SIN|BKK|HKG|KUL|PVG|HAN|SGN|MNL|TPE|CGK)\b/.test(l))
-          airline = l;
+        if (
+          l.length >= 3 && l.length <= 60 && /[A-Za-z]{3}/.test(l) &&
+          !/^\d|€|\$|nonstop|direct|stop|hr|min|:\d{2}|\+\d|Economy|Business|First|Select|Book|More|Carbon|Wi-Fi|USB|Flight|Depart/i.test(l) &&
+          !/\b(ZRH|FRA|CDG|LHR|AMS|VIE|BCN|FCO|NRT|ICN|SIN|BKK|HKG|KUL|PVG|HAN|SGN|MNL|TPE|CGK)\b/.test(l)
+        ) airline = l;
       }
     }
 
+    // Search forward up to 15 lines for duration, stops, price
     let dur = '', stops = 0, via = '', layoverDur = '', numPrice = 0;
     for (let j = i + 1; j < Math.min(i + 15, lines.length); j++) {
       const l = lines[j];
-      if (!dur) { const dm = l.match(/^(\d+)\s*hr(?:\s+(\d+)\s*min)?$/i); if (dm) { dur = dm[1] + 'h ' + (dm[2] || '0') + 'm'; continue; } }
+
+      // Duration variants: "13 hr 25 min", "13 hr", "13h 25m"
+      if (!dur) {
+        const dm = l.match(/^(\d+)\s*hr(?:s?\.?)(?:\s+(\d+)\s*min)?$/i)
+                || l.match(/^(\d+)h(?:\s*(\d+)m)?$/i);
+        if (dm) { dur = dm[1] + 'h ' + (dm[2] || '0') + 'm'; continue; }
+      }
+
       if (/^nonstop$/i.test(l)) { stops = 0; continue; }
       if (/^1 stop$/i.test(l)) { stops = 1; continue; }
       const sm = l.match(/^(\d+) stops?$/i); if (sm) { stops = parseInt(sm[1]); continue; }
-      if (!via) { const vm = l.match(/(?:stop|layover)[^A-Z]*([A-Z]{3})\b/); if (vm) via = vm[1]; }
-      if (!layoverDur) { const lm = l.match(/(\d+)\s*hr(?:\s+(\d+)\s*min)?\s+layover/i); if (lm) layoverDur = lm[1] + 'h ' + (lm[2] || '0') + 'm'; }
+
+      if (!via) {
+        const vm = l.match(/(?:stop|layover)[^A-Z]*([A-Z]{3})\b/);
+        if (vm) via = vm[1];
+        // Also try "· DXB ·" format
+        const vm2 = l.match(/·\s*([A-Z]{3})\s*·/);
+        if (vm2) via = vm2[1];
+      }
+
+      if (!layoverDur) {
+        const lm = l.match(/(\d+)\s*hr(?:s?\.?)(?:\s+(\d+)\s*min)?\s+layover/i);
+        if (lm) layoverDur = lm[1] + 'h ' + (lm[2] || '0') + 'm';
+      }
+
       if (!numPrice) {
-        const pm = l.match(/^€\s*([\d,]+)$/);
-        if (pm) { const n = parseInt(pm[1].replace(/,/g, '')); if (n >= 200 && n <= 60000) { numPrice = n; break; } }
+        const pm = l.match(/^€\s*([\d,]+)$/) || l.match(/^([\d,]+)\s*€$/);
+        if (pm) {
+          const n = parseInt(pm[1].replace(/,/g, ''));
+          if (n >= 200 && n <= 60000) { numPrice = n; break; }
+        }
       }
     }
 
-    if (!numPrice || !dur) continue;
+    if (!numPrice) continue;
+
     results.push({ airline, depTime, arrTime, dur, stops, via, layoverDur, price: '€' + numPrice, numPrice });
   }
 
+  // Deduplicate by depTime + price
   const seen = new Set();
-  return results.filter(r => { const k = r.depTime + '-' + r.numPrice; if (seen.has(k)) return false; seen.add(k); return true; });
+  return results.filter(r => {
+    const k = r.depTime + '-' + r.numPrice;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function gridFallback(datePrices, stay, cabinOk, cabin, from, to, resultUrl) {
+  return datePrices.slice(0, 5).map((dp, idx) => {
+    const retDate = new Date(dp.date.getTime() + stay * 86400000);
+    return {
+      from, to, fromCode: from, toCode: to,
+      airline: 'See Google Flights', dur: '', stops: 0, via: '', layoverDur: '',
+      price: '€' + dp.price, numPrice: dp.price,
+      dep: M[dp.month] + ' ' + dp.day + ' ' + dp.year,
+      ret: M[retDate.getMonth()] + ' ' + retDate.getDate() + ' ' + retDate.getFullYear(),
+      depDate: dp.iso, retDate: retDate.toISOString().slice(0, 10),
+      stayLabel: stay + 'd', cabin: cabinOk ? cabin : 'Economy*',
+      real: true, best: idx === 0, buyUrl: resultUrl,
+    };
+  });
 }
 
 async function scrapeRoute({ from, to, depart, ret, cabin = 'Business', stay = 90 }) {
@@ -267,14 +349,11 @@ async function scrapeRoute({ from, to, depart, ret, cabin = 'Business', stay = 9
 
     const gridUrl = page.url();
     const pageText = await page.evaluate(() => document.body.innerText);
-    console.log('[FSX] Grid page text length:', pageText.length);
-    console.log('[FSX] Grid sample:', pageText.slice(0, 300).replace(/\n/g, '|'));
-
     const datePrices = parseDateGrid(pageText, depart, ret);
-    console.log('[FSX]', from, '->', to, '| grid prices in range:', datePrices.length, '| cabin:', cabinOk ? cabin : 'Economy*');
+    console.log('[FSX]', from, '->', to, '| grid prices:', datePrices.length, '| cabin:', cabinOk ? cabin : 'Economy*');
 
     if (!datePrices.length) {
-      console.log('[FSX] No grid prices — possible consent/captcha. Page snippet:\n' + pageText.slice(0, 500));
+      console.log('[FSX] No grid prices. Page snippet:', pageText.slice(0, 300).replace(/\n/g, '|'));
       return [];
     }
 
@@ -282,35 +361,24 @@ async function scrapeRoute({ from, to, depart, ret, cabin = 'Business', stay = 9
     const resultUrl = page.url();
 
     if (!bestDate || resultUrl === gridUrl) {
-      // Fall back to grid prices with no flight details
-      console.log('[FSX] Could not click through to results, returning grid prices');
-      const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      return datePrices.slice(0, 5).map((dp, idx) => {
-        const retDate = new Date(dp.date.getTime() + stay * 86400000);
-        return {
-          from, to, fromCode: from, toCode: to,
-          airline: 'See Google Flights', dur: '', stops: 0, via: '', layoverDur: '',
-          price: '€' + dp.price, numPrice: dp.price,
-          dep: M[dp.month] + ' ' + dp.day + ' ' + dp.year,
-          ret: M[retDate.getMonth()] + ' ' + retDate.getDate() + ' ' + retDate.getFullYear(),
-          depDate: dp.iso, retDate: retDate.toISOString().slice(0, 10),
-          stayLabel: stay + 'd', cabin: cabinOk ? cabin : 'Economy*',
-          real: true, best: idx === 0, buyUrl: gridUrl,
-        };
-      });
+      console.log('[FSX] Could not navigate to results, returning grid fallback');
+      return gridFallback(datePrices, stay, cabinOk, cabin, from, to, gridUrl);
     }
 
+    // Wait a bit more for results to load fully
+    await sleep(2000);
     await page.evaluate(() => window.scrollBy(0, 600));
     await sleep(1500);
 
     const resultsText = await page.evaluate(() => document.body.innerText);
-    console.log('[FSX] Results page text length:', resultsText.length);
-    console.log('[FSX] Results sample:', resultsText.slice(0, 400).replace(/\n/g, '|'));
+
+    // LOG THE FULL RESULTS PAGE TEXT for debugging
+    console.log('[FSX] === RESULTS PAGE TEXT START ===');
+    console.log(resultsText.slice(0, 3000));
+    console.log('[FSX] === RESULTS PAGE TEXT END ===');
 
     let flights = parseFlightResultsFromText(resultsText);
-    console.log('[FSX] Flights extracted:', flights.length);
-
-    const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    console.log('[FSX] Flights parsed from results page:', flights.length);
 
     if (flights.length > 0) {
       flights.sort((a, b) => a.numPrice - b.numPrice);
@@ -328,57 +396,16 @@ async function scrapeRoute({ from, to, depart, ret, cabin = 'Business', stay = 9
         stayLabel: stay + 'd', cabin: cabinOk ? cabin : 'Economy*',
         real: true, best: idx === 0, buyUrl: resultUrl,
       }));
-    } else {
-      // Fallback: grid prices
-      console.log('[FSX] Results text parsing failed, falling back to grid prices');
-      return datePrices.slice(0, 5).map((dp, idx) => {
-        const retDate = new Date(dp.date.getTime() + stay * 86400000);
-        return {
-          from, to, fromCode: from, toCode: to,
-          airline: 'See Google Flights', dur: '', stops: 0, via: '', layoverDur: '',
-          price: '€' + dp.price, numPrice: dp.price,
-          dep: M[dp.month] + ' ' + dp.day + ' ' + dp.year,
-          ret: M[retDate.getMonth()] + ' ' + retDate.getDate() + ' ' + retDate.getFullYear(),
-          depDate: dp.iso, retDate: retDate.toISOString().slice(0, 10),
-          stayLabel: stay + 'd', cabin: cabinOk ? cabin : 'Economy*',
-          real: true, best: idx === 0, buyUrl: resultUrl,
-        };
-      });
     }
+
+    // Fallback: grid prices
+    console.log('[FSX] Results parsing failed, falling back to grid prices');
+    return gridFallback(datePrices, stay, cabinOk, cabin, from, to, resultUrl);
 
   } finally {
     await page.context().close().catch(() => {});
   }
 }
-
-// ── Debug endpoint — screenshot + page text ────────────────────────────────
-app.get('/debug', async (req, res) => {
-  const page = await newPage();
-  try {
-    await page.goto('https://www.google.com/travel/flights?hl=en&curr=EUR', {
-      waitUntil: 'domcontentloaded', timeout: 30000
-    });
-    await sleep(3000);
-    await handleConsent(page);
-    await sleep(2000);
-
-    const url = page.url();
-    const text = await page.evaluate(() => document.body.innerText);
-    const screenshot = await page.screenshot({ type: 'png' });
-    const base64 = screenshot.toString('base64');
-
-    res.json({
-      url,
-      textLength: text.length,
-      textSample: text.slice(0, 1000),
-      screenshot: 'data:image/png;base64,' + base64
-    });
-  } catch(e) {
-    res.json({ error: e.message });
-  } finally {
-    await page.context().close().catch(() => {});
-  }
-});
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 const EU_HUBS = [
@@ -393,7 +420,7 @@ const AS_AIRPORTS = [
   {code:'MNL',name:'Manila'},{code:'TPE',name:'Taipei'},{code:'CGK',name:'Jakarta'}
 ];
 
-app.get('/health', (req, res) => res.json({ status: 'FSX scraper online', version: '17b' }));
+app.get('/health', (req, res) => res.json({ status: 'FSX scraper online', version: '18.0' }));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'FSX-standalone.html')));
 
 app.get('/scrape', async (req, res) => {
@@ -432,4 +459,4 @@ app.get('/scan', async (req, res) => {
   res.json({ ok: true, count: all.length, results: all.slice(0, 50) });
 });
 
-app.listen(PORT, () => console.log('[FSX] Server v17b on port', PORT));
+app.listen(PORT, () => console.log('[FSX] Server v18 on port', PORT));
