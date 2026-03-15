@@ -239,7 +239,7 @@
                 onMouseLeave={e=>e.currentTarget.style.filter='none'}>
                 ✈ View on Google Flights
               </a>
-              <a href={'https://www.kayak.com/flights/'+(t.fromCode||'')+'-'+(t.toCode||'')+(t.depDate?'/'+t.depDate:'')+(t.retDate?'/'+t.retDate:'')+'/business?sort=price_a'}
+              <a href={'https://www.kayak.com/flights/'+(t.fromCode||'')+'-'+(t.toCode||'')+(t.depDate?'/'+t.depDate:'')+(t.retDate?'/'+t.retDate:'')+'/business?sort=price_a&currency=EUR'}
                 target="_blank" rel="noopener noreferrer"
                 style={{display:'inline-flex',alignItems:'center',gap:5,background:'transparent',border:'1px solid #2a2a2a',color:'#888',textDecoration:'none',padding:'6px 14px',borderRadius:4,fontSize:10,fontWeight:600,letterSpacing:1,fontFamily:mono,transition:'all .15s',whiteSpace:'nowrap'}}
                 onMouseEnter={e=>{e.currentTarget.style.borderColor='#555';e.currentTarget.style.color='#bbb';}}
