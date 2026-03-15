@@ -362,10 +362,26 @@ async function scrapeRoute({ from, to, depart, ret, cabin = 'Business', stay = 9
 
     const bestDate = await clickCheapestDate(page, datePrices);
     const resultUrl = page.url();
+    console.log('[FSX] After click — URL changed:', resultUrl !== gridUrl, '| bestDate:', bestDate ? bestDate.iso : 'null');
 
-    if (!bestDate || resultUrl === gridUrl) {
-      console.log('[FSX] Could not navigate to results, returning grid fallback');
+    if (!bestDate) {
+      console.log('[FSX] Click failed, returning grid fallback');
       return gridFallback(datePrices, stay, cabinOk, cabin, from, to, gridUrl);
+    }
+
+    // Wait for flight times to appear on page (works whether URL changed or not)
+    try {
+      await page.waitForFunction(
+        () => {
+          const t = document.body.innerText;
+          // Need times AND duration — signals we're on a flight list, not the grid
+          return /\d{1,2}:\d{2}/.test(t) && /\d+\s*hr/i.test(t);
+        },
+        { timeout: 15000, polling: 1000 }
+      );
+      console.log('[FSX] Flight results detected on page');
+    } catch(e) {
+      console.log('[FSX] Could not detect flight results:', e.message.slice(0, 40));
     }
 
     // Wait for results to load fully
