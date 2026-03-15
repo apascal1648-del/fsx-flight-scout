@@ -155,13 +155,48 @@ async function clickCheapestDate(page, datePrices) {
       }
       return null;
     }, { targetIso: best.iso, targetPrice: best.price });
+
     if (clicked) {
-      console.log('[FSX] Clicked via:', clicked.method);
+      console.log('[FSX] Date clicked via:', clicked.method);
+      await sleep(1500);
+
+      // After selecting a date on the grid, we need to click Search to get flight results
+      // The date click just selects the date — Search button triggers the actual lookup
+      let searchClicked = false;
+      try {
+        // Try the Done/Search button that appears after date selection
+        const doneBtn = page.locator('button').filter({ hasText: /^(Done|Search|Apply)$/i }).first();
+        if (await doneBtn.isVisible({ timeout: 3000 })) {
+          await doneBtn.click();
+          console.log('[FSX] Clicked Done/Search after date selection');
+          searchClicked = true;
+        }
+      } catch {}
+
+      if (!searchClicked) {
+        // Try the main Search button
+        try {
+          const sb = page.getByRole('button', { name: /^Search$/i }).last();
+          if (await sb.isVisible({ timeout: 3000 })) {
+            await sb.click();
+            console.log('[FSX] Clicked main Search button');
+            searchClicked = true;
+          }
+        } catch {}
+      }
+
+      if (!searchClicked) {
+        // Press Enter as last resort
+        await page.keyboard.press('Enter');
+        console.log('[FSX] Pressed Enter to search');
+      }
+
+      // Wait for flight results to load
       await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
       await sleep(3000);
       return best;
     }
-  } catch(e) { console.log('[FSX] clickCheapestDate error:', e.message.slice(0, 50)); }
+  } catch(e) { console.log('[FSX] clickCheapestDate error:', e.message.slice(0, 80)); }
   return null;
 }
 
