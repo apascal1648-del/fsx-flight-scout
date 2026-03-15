@@ -378,14 +378,23 @@ async function scrapeRoute({ from, to, depart, ret, cabin = 'Business', stay = 9
       return [];
     }
 
-    const bestDate = await clickCheapestDate(page, datePrices);
-    const resultUrl = page.url();
-    console.log('[FSX] After click — URL changed:', resultUrl !== gridUrl, '| bestDate:', bestDate ? bestDate.iso : 'null');
+    const bestDate = datePrices[0];
+    console.log('[FSX] Best date from grid:', bestDate.iso, '€' + bestDate.price);
 
-    if (!bestDate) {
-      console.log('[FSX] Click failed, returning grid fallback');
-      return gridFallback(datePrices, stay, cabinOk, cabin, from, to, gridUrl);
-    }
+    // Compute return date = depart + stay days
+    const retDate = new Date(bestDate.date.getTime() + stay * 86400000);
+    const retIso = retDate.toISOString().slice(0, 10);
+
+    // Build direct URL to flight results for this specific date
+    // e:1=economy, e:2=business, e:3=first
+    const cabinCode = /business/i.test(cabin) ? 2 : /first/i.test(cabin) ? 3 : 1;
+    const directUrl = `https://www.google.com/travel/flights?hl=en&curr=EUR#flt=${from}.${to}.${bestDate.iso}*${to}.${from}.${retIso};c:EUR;e:${cabinCode};sd:1;t:f`;
+    console.log('[FSX] Navigating directly to:', directUrl);
+
+    await page.goto(directUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await sleep(2000);
+    await handleConsent(page);
+    const resultUrl = page.url();
 
     // After clicking a date, Google shows results INLINE on the same page.
     // Wait for flight time patterns to appear (departure times like "10:30 AM")
