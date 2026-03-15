@@ -1,9 +1,10 @@
 /**
- * FSX Flight Scout v20
- * Switched from Google Flights to Skyscanner.
- * - Direct URL: skyscanner.net/transport/flights/ZRH/KUL/260401/260701/
- * - No date grid, no form filling — goes straight to results
- * - Extracts each flight card: airline, dep time, arr time, duration, stops, price
+ * FSX Flight Scout v21
+ * Skyscanner scraping with:
+ * - Mobile user agent (less likely to be blocked)
+ * - Proper timeout handling to avoid Railway 502s
+ * - Better consent handling
+ * - Detailed logging to diagnose issues
  */
 const express = require('express');
 const cors = require('cors');
@@ -23,33 +24,37 @@ async function getBrowser() {
   if (browser && browser.isConnected()) return browser;
   if (launching) { for(let i=0;i<30;i++){await sleep(500);if(browser?.isConnected())return browser;} }
   launching = true;
-  browser = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage',
-           '--disable-blink-features=AutomationControlled','--window-size=1366,768']
-  });
-  launching = false;
+  try {
+    browser = await chromium.launch({
+      headless: true,
+      args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage',
+             '--disable-blink-features=AutomationControlled',
+             '--disable-web-security','--window-size=390,844']
+    });
+  } finally { launching = false; }
   return browser;
 }
 
 async function newPage() {
   const b = await getBrowser();
   const ctx = await b.newContext({
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    // Use mobile user agent — less bot detection
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
     locale: 'en-GB',
-    timezoneId: 'Europe/Zurich',
-    viewport: { width: 1366, height: 768 },
-    extraHTTPHeaders: { 'Accept-Language': 'en-GB,en;q=0.9' },
+    timezoneId: 'Europe/London',
+    viewport: { width: 390, height: 844 },
+    extraHTTPHeaders: {
+      'Accept-Language': 'en-GB,en;q=0.9',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    },
   });
   await ctx.addInitScript(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
-    window.chrome = { runtime:{}, loadTimes:()=>{}, csi:()=>{}, app:{} };
+    Object.defineProperty(navigator, 'platform', { get: () => 'iPhone' });
   });
   return ctx.newPage();
 }
 
-// Convert ISO date "2026-04-01" → Skyscanner format "260401"
 function isoToSky(iso) {
   const d = new Date(iso + 'T12:00:00');
   const yy = String(d.getFullYear()).slice(-2);
@@ -58,77 +63,56 @@ function isoToSky(iso) {
   return yy + mm + dd;
 }
 
-// Format ISO date for display: "2026-04-01" → "Apr 1 2026"
 function isoToDisp(iso) {
   const d = new Date(iso + 'T12:00:00');
   const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   return M[d.getMonth()] + ' ' + d.getDate() + ' ' + d.getFullYear();
 }
 
-// Cabin class mapping for Skyscanner
 function cabinParam(cabin) {
   if (/business/i.test(cabin)) return 'business';
   if (/first/i.test(cabin)) return 'first';
   return 'economy';
 }
 
-/**
- * Build Skyscanner search URL.
- * Example: https://www.skyscanner.net/transport/flights/zrh/kul/260401/260701/?adults=1&cabinclass=business&rtn=1&currency=EUR&locale=en-GB
- */
-function buildSkyscannerUrl(from, to, depIso, retIso, cabin) {
+function buildUrl(from, to, depIso, retIso, cabin) {
   const depSky = isoToSky(depIso);
   const retSky = isoToSky(retIso);
-  const cabinClass = cabinParam(cabin);
-  return `https://www.skyscanner.net/transport/flights/${from.toLowerCase()}/${to.toLowerCase()}/${depSky}/${retSky}/?adults=1&cabinclass=${cabinClass}&rtn=1&currency=EUR&locale=en-GB`;
+  return `https://www.skyscanner.net/transport/flights/${from.toLowerCase()}/${to.toLowerCase()}/${depSky}/${retSky}/?adults=1&cabinclass=${cabinParam(cabin)}&rtn=1&currency=EUR&locale=en-GB`;
 }
 
-/**
- * Handle cookie consent on Skyscanner
- */
-async function handleSkyscannerConsent(page) {
+async function handleConsent(page) {
   try {
-    // Accept cookies button
-    const acceptBtn = page.locator('button[id*="accept"], button[data-testid*="accept-btn"]').first();
-    if (await acceptBtn.isVisible({ timeout: 4000 })) {
-      await acceptBtn.click();
-      console.log('[FSX] Skyscanner consent accepted');
-      await sleep(1000);
-      return;
+    // Skyscanner cookie banner
+    const selectors = [
+      '[data-testid="cookie-banner-accept-btn"]',
+      '#acceptCookieButton',
+      'button[id*="accept"]',
+      'button[data-testid*="accept"]',
+    ];
+    for (const sel of selectors) {
+      try {
+        const btn = page.locator(sel).first();
+        if (await btn.isVisible({ timeout: 2000 })) {
+          await btn.click();
+          console.log('[FSX] Cookie consent accepted via:', sel);
+          await sleep(800);
+          return;
+        }
+      } catch {}
     }
-  } catch {}
-  try {
-    // Generic accept button
+    // Text-based fallback
     const btns = await page.locator('button').all();
     for (const btn of btns) {
       const txt = (await btn.innerText().catch(() => '')).toLowerCase();
-      if (txt.includes('accept') || txt.includes('agree') || txt.includes('ok')) {
-        await btn.click();
-        await sleep(1000);
-        return;
+      if (txt.includes('accept all') || txt.includes('accept cookie')) {
+        await btn.click(); await sleep(800); return;
       }
     }
-  } catch {}
+  } catch(e) { console.log('[FSX] Consent handler error:', e.message.slice(0,50)); }
 }
 
-/**
- * Extract flights from Skyscanner results page text.
- * Skyscanner text format is typically:
- *
- * Swiss
- * 10:25 - 06:45+1
- * 1 stop · ZRH
- * 19h 20m
- * €2,049
- *
- * or for direct:
- * Malaysia Airlines
- * 11:30 - 06:00+1
- * Direct
- * 13h 30m
- * €1,980
- */
-function parseSkyscannerFlights(text) {
+function parseFlights(text) {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   const results = [];
 
@@ -138,7 +122,7 @@ function parseSkyscannerFlights(text) {
     'Air France','KLM','British Airways','Finnair','Thai Airways',
     'ANA','All Nippon Airways','JAL','Japan Airlines','Korean Air',
     'Malaysia Airlines','Vietnam Airlines','EVA Air','China Airlines',
-    'Asiana Airlines','Asiana','Air China','China Southern','China Eastern',
+    'Asiana Airlines','Air China','China Southern','China Eastern',
     'Garuda Indonesia','Garuda','Philippine Airlines','Oman Air','Gulf Air',
     'Saudia','Air India','IndiGo','flydubai','Air Arabia','Multiple airlines',
   ];
@@ -146,74 +130,58 @@ function parseSkyscannerFlights(text) {
   for (let i = 0; i < lines.length - 2; i++) {
     const line = lines[i];
 
-    // Anchor: time range "10:25 - 06:45+1" or "10:25 – 06:45"
-    const timeMatch = line.match(
-      /^(\d{1,2}:\d{2})\s*[-–—]\s*(\d{1,2}:\d{2})(\+\d)?$/
-    );
-    if (!timeMatch) continue;
+    // Time range: "10:25 - 06:45+1" or "10:25 – 06:45"
+    const tm = line.match(/^(\d{1,2}:\d{2})\s*[-–—]\s*(\d{1,2}:\d{2})(\+\d)?$/);
+    if (!tm) continue;
 
-    const depTime = timeMatch[1];
-    const arrTime = timeMatch[2] + (timeMatch[3] || '');
+    const depTime = tm[1];
+    const arrTime = tm[2] + (tm[3] || '');
 
-    // Search backwards up to 4 lines for airline
+    // Airline — search backwards
     let airline = '';
-    for (let j = Math.max(0, i - 4); j < i; j++) {
+    for (let j = Math.max(0, i - 5); j < i; j++) {
       const l = lines[j];
       const known = knownAirlines.find(a => l.toLowerCase().includes(a.toLowerCase()));
       if (known) { airline = known; break; }
-      // Fallback heuristic
-      if (
-        l.length >= 3 && l.length <= 60 &&
-        /[A-Za-z]{3}/.test(l) &&
-        !/^\d|€|£|\$|stop|direct|hr|min|:\d|Economy|Business|First|cabin|price|cheapest|sort|filter|from/i.test(l) &&
-        !/\b(ZRH|FRA|CDG|LHR|AMS|VIE|BCN|FCO|NRT|ICN|SIN|BKK|HKG|KUL|PVG|HAN|SGN|MNL|TPE|CGK)\b/.test(l)
-      ) airline = l;
+      if (l.length >= 3 && l.length <= 60 && /[A-Za-z]{3}/.test(l) &&
+          !/^\d|€|£|stop|direct|hr|min|:\d|Economy|Business|First|cabin|price|Sort|Filter|From|Search|Select/i.test(l) &&
+          !/\b(ZRH|FRA|CDG|LHR|AMS|VIE|BCN|FCO|NRT|ICN|SIN|BKK|HKG|KUL|PVG|HAN|SGN|MNL|TPE|CGK)\b/.test(l))
+        airline = l;
     }
 
-    // Search forward up to 8 lines for stops, duration, price
+    // Forward: stops, duration, price
     let stops = 0, via = '', dur = '', layoverDur = '', numPrice = 0;
-
-    for (let j = i + 1; j < Math.min(i + 8, lines.length); j++) {
+    for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
       const l = lines[j];
 
-      // Stops: "Direct", "1 stop", "2 stops", "1 stop · DXB"
       if (/^direct$/i.test(l)) { stops = 0; continue; }
-      const stopM = l.match(/^(\d+)\s*stops?(?:\s*·\s*([A-Z]{3}))?/i);
-      if (stopM) {
-        stops = parseInt(stopM[1]);
-        if (stopM[2]) via = stopM[2];
-        continue;
-      }
+      const sm = l.match(/^(\d+)\s*stops?(?:\s*[·•]\s*([A-Z]{3}))?/i);
+      if (sm) { stops = parseInt(sm[1]); if (sm[2]) via = sm[2]; continue; }
 
-      // Duration: "19h 20m" or "13h 30m"
       if (!dur) {
-        const durM = l.match(/^(\d+)h\s*(\d+)?m?$/i) || l.match(/^(\d+)\s*hr(?:s?)(?:\s+(\d+)\s*min)?$/i);
-        if (durM) { dur = durM[1] + 'h ' + (durM[2] || '0') + 'm'; continue; }
+        const dm = l.match(/^(\d+)h\s*(\d+)?m?$/) || l.match(/^(\d+)\s*hr(?:s?)(?:\s+(\d+)\s*min)?$/i);
+        if (dm) { dur = dm[1] + 'h ' + (dm[2] || '0') + 'm'; continue; }
       }
 
-      // Layover
       if (!layoverDur) {
-        const layM = l.match(/(\d+)h\s*(\d+)?m?\s+layover/i);
-        if (layM) layoverDur = layM[1] + 'h ' + (layM[2] || '0') + 'm';
+        const lm = l.match(/(\d+)h\s*(\d+)?m?\s+layover/i);
+        if (lm) layoverDur = lm[1] + 'h ' + (lm[2] || '0') + 'm';
       }
 
-      // Price: "€2,049" or "€ 2049" or "2,049 €"
       if (!numPrice) {
-        const priceM = l.match(/^€\s*([\d,]+)$/) || l.match(/^([\d,]+)\s*€$/);
-        if (priceM) {
-          const n = parseInt(priceM[1].replace(/,/g, ''));
+        const pm = l.match(/^€\s*([\d,]+)$/) || l.match(/^([\d,.]+)\s*€$/);
+        if (pm) {
+          const n = parseInt(pm[1].replace(/[,\.]/g, ''));
           if (n >= 100 && n <= 60000) { numPrice = n; break; }
         }
       }
     }
 
-    if (!numPrice || !dur) continue; // must have price and duration
-
+    if (!numPrice) continue;
     results.push({ airline, depTime, arrTime, dur, stops, via, layoverDur,
       price: '€' + numPrice, numPrice });
   }
 
-  // Deduplicate by depTime + price
   const seen = new Set();
   return results.filter(r => {
     const k = r.depTime + '-' + r.numPrice;
@@ -223,92 +191,71 @@ function parseSkyscannerFlights(text) {
   });
 }
 
-/**
- * Main scrape function — Skyscanner direct URL
- */
 async function scrapeRoute({ from, to, depart, ret, cabin = 'Business', stay = 90 }) {
   const page = await newPage();
+  const depDate = new Date(depart + 'T12:00:00');
+  const retDate = new Date(depDate.getTime() + stay * 86400000);
+  const retIso = retDate.toISOString().slice(0, 10);
+
   try {
-    // Compute return date from depart + stay
-    const depDate = new Date(depart + 'T12:00:00');
-    const retDate = new Date(depDate.getTime() + stay * 86400000);
-    const retIso = retDate.toISOString().slice(0, 10);
+    const url = buildUrl(from, to, depart, retIso, cabin);
+    console.log('[FSX] Loading:', url);
 
-    const url = buildSkyscannerUrl(from, to, depart, retIso, cabin);
-    console.log('[FSX] Skyscanner URL:', url);
-
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 35000 });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 40000 });
     await sleep(2000);
-    await handleSkyscannerConsent(page);
+    await handleConsent(page);
     await sleep(1000);
 
-    // Wait for flight results — prices and times must appear
+    const currentUrl = page.url();
+    const pageTitle = await page.title();
+    console.log('[FSX] Page title:', pageTitle);
+    console.log('[FSX] Current URL:', currentUrl.slice(0, 100));
+
+    // Wait for prices to appear
     try {
       await page.waitForFunction(
-        () => {
-          const t = document.body.innerText;
-          return (t.match(/€[\d,]+/g) || []).length >= 3
-              && (t.match(/\d{1,2}:\d{2}/g) || []).length >= 4;
-        },
-        { timeout: 30000, polling: 2000 }
+        () => (document.body.innerText.match(/€[\d,]+/g) || []).length >= 2,
+        { timeout: 25000, polling: 2000 }
       );
-      console.log('[FSX] Skyscanner results loaded');
+      console.log('[FSX] Prices found on page');
     } catch(e) {
-      console.log('[FSX] Wait timeout:', e.message.slice(0, 50));
+      console.log('[FSX] No prices found in time:', e.message.slice(0, 50));
     }
 
-    await sleep(2000);
-    // Scroll to load more results
-    await page.evaluate(() => window.scrollBy(0, 600));
-    await sleep(1000);
+    await sleep(1500);
+    const text = await page.evaluate(() => document.body.innerText.replace(/\u00a0/g, ' '));
+    console.log('[FSX] Page text length:', text.length);
+    console.log('[FSX] Page text sample:\n' + text.slice(0, 1500));
 
-    const resultUrl = page.url();
-    const pageText = await page.evaluate(() => document.body.innerText.replace(/\u00a0/g, ' '));
+    const flights = parseFlights(text);
+    console.log('[FSX]', from, '->', to, '| flights:', flights.length);
 
-    console.log('[FSX] Page text length:', pageText.length);
-    console.log('[FSX] Sample text:\n' + pageText.slice(0, 1000));
-
-    let flights = parseSkyscannerFlights(pageText);
-    console.log('[FSX]', from, '->', to, '| flights found:', flights.length);
-
-    if (flights.length === 0) {
-      console.log('[FSX] Full page text:\n' + pageText.slice(0, 3000));
-      return [];
-    }
+    if (flights.length === 0) return [];
 
     flights.sort((a, b) => a.numPrice - b.numPrice);
     const top = flights.slice(0, 5);
-
-    const depDisp = isoToDisp(depart);
-    const retDisp = isoToDisp(retIso);
     const stayDays = Math.round((retDate - depDate) / 86400000);
 
     return top.map((f, idx) => ({
       from, to, fromCode: from, toCode: to,
-      airline:    f.airline || 'See Skyscanner',
-      dur:        f.dur,
-      stops:      f.stops,
-      via:        f.via,
-      layoverDur: f.layoverDur,
-      price:      f.price,
-      numPrice:   f.numPrice,
-      dep:        depDisp + (f.depTime ? ' ' + f.depTime : ''),
-      ret:        retDisp + (f.arrTime ? ' ' + f.arrTime : ''),
-      depDate:    depart,
-      retDate:    retIso,
-      stayLabel:  stayDays + 'd',
-      cabin,
-      real:       true,
-      best:       idx === 0,
-      buyUrl:     resultUrl,
+      airline: f.airline || 'See Skyscanner',
+      dur: f.dur, stops: f.stops, via: f.via, layoverDur: f.layoverDur,
+      price: f.price, numPrice: f.numPrice,
+      dep: isoToDisp(depart) + (f.depTime ? ' ' + f.depTime : ''),
+      ret: isoToDisp(retIso) + (f.arrTime ? ' ' + f.arrTime : ''),
+      depDate: depart, retDate: retIso,
+      stayLabel: stayDays + 'd', cabin,
+      real: true, best: idx === 0, buyUrl: currentUrl,
     }));
 
+  } catch(e) {
+    console.log('[FSX] scrapeRoute error:', e.message);
+    return [];
   } finally {
     await page.context().close().catch(() => {});
   }
 }
 
-// ── Routes ──────────────────────────────────────────────────────────────────
 const EU_HUBS = [
   {code:'ZRH',name:'Zurich'},{code:'FRA',name:'Frankfurt'},{code:'CDG',name:'Paris'},
   {code:'LHR',name:'London'},{code:'AMS',name:'Amsterdam'},{code:'VIE',name:'Vienna'},
@@ -321,7 +268,7 @@ const AS_AIRPORTS = [
   {code:'MNL',name:'Manila'},{code:'TPE',name:'Taipei'},{code:'CGK',name:'Jakarta'}
 ];
 
-app.get('/health', (req, res) => res.json({ status: 'FSX scraper online — Skyscanner', version: '20.0' }));
+app.get('/health', (req, res) => res.json({ status: 'FSX online - Skyscanner v21' }));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'FSX-standalone.html')));
 
 app.get('/scrape', async (req, res) => {
@@ -332,6 +279,7 @@ app.get('/scrape', async (req, res) => {
     const results = await scrapeRoute({ from, to, depart, ret, cabin, stay: parseInt(stay) });
     res.json({ ok: true, results });
   } catch(e) {
+    console.log('[FSX] /scrape error:', e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -360,4 +308,4 @@ app.get('/scan', async (req, res) => {
   res.json({ ok: true, count: all.length, results: all.slice(0, 50) });
 });
 
-app.listen(PORT, () => console.log('[FSX] Server v20 (Skyscanner) on port', PORT));
+app.listen(PORT, () => console.log('[FSX] Server v21 (Skyscanner) on port', PORT));
