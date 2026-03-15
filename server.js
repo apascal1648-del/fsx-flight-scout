@@ -138,7 +138,7 @@ async function clickCheapestDate(page, datePrices) {
   const best = datePrices[0];
   console.log('[FSX] Clicking cheapest date:', best.iso, '€' + best.price);
   try {
-    const clicked = await page.evaluate((targetIso, targetPrice) => {
+    const clicked = await page.evaluate(({ targetIso, targetPrice }) => {
       const byIso = document.querySelector('[data-iso="' + targetIso + '"]');
       if (byIso) { byIso.click(); return { method: 'data-iso' }; }
       const allEls = [...document.querySelectorAll('*')];
@@ -154,7 +154,7 @@ async function clickCheapestDate(page, datePrices) {
         }
       }
       return null;
-    }, best.iso, best.price);
+    }, { targetIso: best.iso, targetPrice: best.price });
     if (clicked) {
       console.log('[FSX] Clicked via:', clicked.method);
       await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
