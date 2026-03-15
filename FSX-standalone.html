@@ -158,85 +158,97 @@
   }
 
   // ── Ticket Card ──────────────────────────────────────────────────────────
+  // Extract time from "May 1 2026 10:30 AM" → "10:30 AM"
+  function extractTime(str) {
+    if (!str) return '';
+    const m = str.match(/\b(\d{1,2}:\d{2}(?:\s*[AP]M)?)/i);
+    return m ? m[1] : '';
+  }
+  // Extract date portion, strip trailing time → "May 1 2026"
+  function extractDate(str) {
+    if (!str) return str || '';
+    return str.replace(/\s+\d{1,2}:\d{2}(?:\s*[AP]M)?/i, '').trim();
+  }
+
   function Card({ t, i }) {
+    const mono = "'DM Mono',monospace";
+    const serif = "'Playfair Display',serif";
     return (
       <div className={'ticket-card'+(t.best?' best-card':'')} style={{animationDelay:i*.06+'s'}}>
         <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
+
           {/* Rank */}
-          <div style={{fontSize:12,fontWeight:700,color:t.best?'#38c870':'#333',fontFamily:"'DM Mono',monospace",minWidth:26,flexShrink:0}}>#{i+1}</div>
+          <div style={{fontSize:12,fontWeight:700,color:t.best?'#38c870':'#333',fontFamily:mono,minWidth:26,flexShrink:0}}>#{i+1}</div>
+
           {/* Route */}
-          <div style={{flex:'1 1 auto',minWidth:220}}>
-            <div style={{display:'flex',alignItems:'center',gap:8}}>
-              <div>
-                <div style={{fontSize:22,fontWeight:700,fontFamily:"'Playfair Display',serif",lineHeight:1,color:'#f0ede4'}}>{t.from}</div>
-                <div style={{fontSize:10,color:'#555',fontFamily:"'DM Mono',monospace",letterSpacing:2,marginTop:2}}>{t.fromCode}</div>
+          <div style={{flex:'1 1 auto',minWidth:260}}>
+            <div style={{display:'flex',alignItems:'center',gap:0}}>
+              {/* Origin */}
+              <div style={{minWidth:90}}>
+                <div style={{fontSize:20,fontWeight:700,fontFamily:serif,lineHeight:1,color:'#f0ede4'}}>{t.from}</div>
+                <div style={{fontSize:10,color:'#555',fontFamily:mono,letterSpacing:2,marginTop:2}}>{t.fromCode}</div>
               </div>
-              <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'0 16px',flex:'1 1 160px'}}>
-                <div style={{fontSize:15,color:'#c8a84b',fontFamily:"'DM Mono',monospace",fontWeight:700,letterSpacing:1,marginBottom:6}}>{t.dur||''}</div>
-                <div style={{display:'flex',alignItems:'center',gap:0,width:'100%',marginBottom:6}}>
+
+              {/* Arrow */}
+              <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',padding:'0 14px'}}>
+                <div style={{display:'flex',alignItems:'center',width:'100%',marginBottom:4}}>
                   <div style={{flex:1,height:1,background:'linear-gradient(to right,#2a2a2a,#555)'}}/>
-                  <span style={{fontSize:16,color:'#c8a84b',margin:'0 4px'}}>✈</span>
+                  <span style={{fontSize:15,color:'#c8a84b',margin:'0 4px'}}>✈</span>
                   <div style={{flex:1,height:1,background:'linear-gradient(to right,#555,#2a2a2a)'}}/>
                 </div>
-                <div style={{fontSize:11,color:t.stops===0?'#38c870':'#aaa',fontFamily:"'DM Mono',monospace",letterSpacing:2,fontWeight:600,marginBottom:t.via?8:0}}>
-                  {t.stops===0?'⬥ DIRECT':t.stops+' STOP'+(t.stops>1?'S':'')}
-                </div>
-                {t.via && (
-                  <div style={{background:'rgba(200,168,75,.06)',border:'1px solid rgba(200,168,75,.12)',borderRadius:3,padding:'4px 12px',textAlign:'center',width:'100%'}}>
-                    <div style={{fontSize:11,color:'#d0cdc4',fontFamily:"'DM Mono',monospace",fontWeight:600,letterSpacing:.5}}>{t.via}</div>
-                  </div>
-                )}
+                <div style={{fontSize:9,color:'#555',fontFamily:mono,letterSpacing:1,textTransform:'uppercase',textAlign:'center'}}>click to see flights</div>
               </div>
-              <div>
-                <div style={{fontSize:22,fontWeight:700,fontFamily:"'Playfair Display',serif",lineHeight:1,color:'#f0ede4'}}>{t.to}</div>
-                <div style={{fontSize:10,color:'#555',fontFamily:"'DM Mono',monospace",letterSpacing:2,marginTop:2}}>{t.toCode}</div>
+
+              {/* Destination */}
+              <div style={{minWidth:90,textAlign:'right'}}>
+                <div style={{fontSize:20,fontWeight:700,fontFamily:serif,lineHeight:1,color:'#f0ede4'}}>{t.to}</div>
+                <div style={{fontSize:10,color:'#555',fontFamily:mono,letterSpacing:2,marginTop:2}}>{t.toCode}</div>
               </div>
             </div>
+            {t.cabin && t.cabin.includes('*') && <div style={{fontSize:9,color:'#e07840',fontFamily:mono,marginTop:4}}>* cabin may differ</div>}
           </div>
-          {/* Airline */}
-          <div style={{flex:'1 1 110px',minWidth:110}}>
-            <div style={{fontSize:13,fontWeight:600,color:'#d0cdc4'}}>{t.airline}</div>
-            <div style={{fontSize:10,color:'#444',fontFamily:"'DM Mono',monospace",marginTop:2,letterSpacing:1}}>AIRLINE</div>
-          </div>
+
           {/* Dates + Stay */}
-          <div style={{flex:'1 1 210px',display:'flex',gap:14,flexWrap:'wrap'}}>
+          <div style={{flex:'0 1 auto',display:'flex',flexDirection:'column',gap:8,minWidth:140}}>
             {t.dep && <div>
-              <div style={{fontSize:9,color:'#555',fontFamily:"'DM Mono',monospace",textTransform:'uppercase',letterSpacing:1,marginBottom:2}}>Departure</div>
-              <div style={{fontSize:12,fontWeight:500,color:'#b0ada4',fontFamily:"'DM Mono',monospace"}}>{t.dep}</div>
+              <div style={{fontSize:9,color:'#555',fontFamily:mono,textTransform:'uppercase',letterSpacing:1,marginBottom:2}}>Departs</div>
+              <div style={{fontSize:12,fontWeight:600,color:'#b0ada4',fontFamily:mono}}>{t.dep}</div>
             </div>}
             {t.ret && <div>
-              <div style={{fontSize:9,color:'#555',fontFamily:"'DM Mono',monospace",textTransform:'uppercase',letterSpacing:1,marginBottom:2}}>Return</div>
-              <div style={{fontSize:12,fontWeight:500,color:'#b0ada4',fontFamily:"'DM Mono',monospace"}}>{t.ret}</div>
+              <div style={{fontSize:9,color:'#555',fontFamily:mono,textTransform:'uppercase',letterSpacing:1,marginBottom:2}}>Returns</div>
+              <div style={{fontSize:12,fontWeight:600,color:'#b0ada4',fontFamily:mono}}>{t.ret}</div>
             </div>}
-            {t.stayLabel && <div style={{background:'rgba(200,168,75,.08)',border:'1px solid rgba(200,168,75,.2)',borderRadius:3,padding:'3px 10px'}}>
-              <div style={{fontSize:9,color:'#8a6a30',fontFamily:"'DM Mono',monospace",textTransform:'uppercase',letterSpacing:1,marginBottom:1}}>Stay</div>
-              <div style={{fontSize:12,fontWeight:700,color:'#c8a84b',fontFamily:"'DM Mono',monospace"}}>{t.stayLabel}</div>
+            {t.stayLabel && <div style={{background:'rgba(200,168,75,.08)',border:'1px solid rgba(200,168,75,.2)',borderRadius:3,padding:'3px 10px',display:'inline-block'}}>
+              <div style={{fontSize:9,color:'#8a6a30',fontFamily:mono,textTransform:'uppercase',letterSpacing:1,marginBottom:1}}>Stay</div>
+              <div style={{fontSize:12,fontWeight:700,color:'#c8a84b',fontFamily:mono}}>{t.stayLabel}</div>
             </div>}
           </div>
+
           {/* Price + Book */}
           <div style={{display:'flex',alignItems:'center',gap:14,marginLeft:'auto',flexShrink:0}}>
             <div style={{textAlign:'right'}}>
-              {t.best && <div style={{fontSize:9,color:'#38c870',fontFamily:"'DM Mono',monospace",letterSpacing:1,marginBottom:2}}>★ BEST DEAL</div>}
-              {t.real && !t.best && <div style={{fontSize:9,color:'#4a9a6a',fontFamily:"'DM Mono',monospace",letterSpacing:1,marginBottom:2}}>● SCRAPED</div>}
-              <div style={{fontSize:26,fontWeight:700,fontFamily:"'Playfair Display',serif",color:t.best?'#38c870':'#f0ede4',lineHeight:1}}>{t.price}</div>
-              <div style={{fontSize:9,color:'#444',fontFamily:"'DM Mono',monospace",marginTop:3,letterSpacing:1}}>ROUND TRIP</div>
+              {t.best && <div style={{fontSize:9,color:'#38c870',fontFamily:mono,letterSpacing:1,marginBottom:2}}>★ BEST DEAL</div>}
+              {t.real && !t.best && <div style={{fontSize:9,color:'#4a9a6a',fontFamily:mono,letterSpacing:1,marginBottom:2}}>● SCRAPED</div>}
+              <div style={{fontSize:26,fontWeight:700,fontFamily:serif,color:t.best?'#38c870':'#f0ede4',lineHeight:1}}>{t.price}</div>
+              <div style={{fontSize:9,color:'#444',fontFamily:mono,marginTop:3,letterSpacing:1}}>ROUND TRIP</div>
             </div>
             <div style={{display:'flex',flexDirection:'column',gap:6,alignItems:'flex-end',flexShrink:0}}>
               <a href={t.buyUrl||'#'} target="_blank" rel="noopener noreferrer"
-                style={{display:'inline-flex',alignItems:'center',gap:5,background:'linear-gradient(135deg,#c8a84b,#8a6a10)',color:'#0a0a0a',textDecoration:'none',padding:'9px 16px',borderRadius:4,fontSize:11,fontWeight:700,letterSpacing:1.5,fontFamily:"'DM Mono',monospace",transition:'all .15s',whiteSpace:'nowrap'}}
+                style={{display:'inline-flex',alignItems:'center',gap:5,background:'linear-gradient(135deg,#c8a84b,#8a6a10)',color:'#0a0a0a',textDecoration:'none',padding:'9px 16px',borderRadius:4,fontSize:11,fontWeight:700,letterSpacing:1.5,fontFamily:mono,transition:'all .15s',whiteSpace:'nowrap'}}
                 onMouseEnter={e=>e.currentTarget.style.filter='brightness(1.15)'}
                 onMouseLeave={e=>e.currentTarget.style.filter='none'}>
-                ✈ Google Flights
+                ✈ View on Google Flights
               </a>
               <a href={'https://www.kayak.com/flights/'+(t.fromCode||'')+'-'+(t.toCode||'')+(t.depDate?'/'+t.depDate:'')+(t.retDate?'/'+t.retDate:'')+'/business?sort=price_a'}
                 target="_blank" rel="noopener noreferrer"
-                style={{display:'inline-flex',alignItems:'center',gap:5,background:'transparent',border:'1px solid #2a2a2a',color:'#888',textDecoration:'none',padding:'6px 14px',borderRadius:4,fontSize:10,fontWeight:600,letterSpacing:1,fontFamily:"'DM Mono',monospace",transition:'all .15s',whiteSpace:'nowrap'}}
+                style={{display:'inline-flex',alignItems:'center',gap:5,background:'transparent',border:'1px solid #2a2a2a',color:'#888',textDecoration:'none',padding:'6px 14px',borderRadius:4,fontSize:10,fontWeight:600,letterSpacing:1,fontFamily:mono,transition:'all .15s',whiteSpace:'nowrap'}}
                 onMouseEnter={e=>{e.currentTarget.style.borderColor='#555';e.currentTarget.style.color='#bbb';}}
                 onMouseLeave={e=>{e.currentTarget.style.borderColor='#2a2a2a';e.currentTarget.style.color='#888';}}>
                 ✈ Kayak
               </a>
             </div>
           </div>
+
         </div>
       </div>
     );
