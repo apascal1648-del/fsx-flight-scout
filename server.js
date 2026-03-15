@@ -166,130 +166,133 @@ async function clickCheapestDate(page, datePrices) {
 }
 
 /**
- * Parse flight results from page text.
- * Logs the raw text to Railway so we can debug the format.
- * Uses a very flexible approach — scan for any two time-like tokens separated by a dash/arrow.
+ * Extract flights using DOM queries — much more reliable than text parsing.
+ * Google Flights renders structured elements we can query directly.
  */
-function parseFlightResultsFromText(text) {
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-  const results = [];
+async function extractFlightsFromDOM(page) {
+  await sleep(2000);
+  await page.evaluate(() => window.scrollBy(0, 500));
+  await sleep(1000);
 
-  const knownAirlines = [
-    'Qatar Airways','Emirates','Etihad Airways','Etihad','Turkish Airlines',
-    'Singapore Airlines','Cathay Pacific','Lufthansa','Swiss','SWISS',
-    'Air France','KLM','British Airways','Finnair','Thai Airways',
-    'ANA','All Nippon Airways','JAL','Japan Airlines','Korean Air',
-    'Malaysia Airlines','Vietnam Airlines','EVA Air','China Airlines',
-    'Asiana Airlines','Asiana','Air China','China Southern','China Eastern',
-    'Garuda Indonesia','Garuda','Philippine Airlines','Oman Air','Gulf Air',
-    'Saudia','Air India','IndiGo','flydubai','Air Arabia',
-  ];
+  const flights = await page.evaluate(() => {
+    const results = [];
 
-  // Time pattern: "10:15 AM", "10:15", "10:15 PM"
-  const timeRe = /\d{1,2}:\d{2}(?:\s*[AP]M)?/i;
+    // Google Flights flight cards — each card is a list item with flight info
+    // Try multiple selectors to find flight result rows
+    const selectors = [
+      'li[class*="flight"]',
+      '[role="listitem"]',
+      'li',
+    ];
 
-  for (let i = 0; i < lines.length - 3; i++) {
-    const line = lines[i];
+    let cards = [];
+    for (const sel of selectors) {
+      const found = [...document.querySelectorAll(sel)].filter(el => {
+        const txt = el.innerText || '';
+        // Must contain a time pattern AND price AND duration
+        return /\d{1,2}:\d{2}/.test(txt)
+          && /€[\d,]+/.test(txt)
+          && /\d+\s*hr/i.test(txt)
+          && txt.length > 50
+          && txt.length < 3000;
+      });
+      if (found.length > 0) { cards = found; break; }
+    }
 
-    // Strategy 1: "10:15 AM – 7:30 AM+1" on one line
-    const oneLine = line.match(
-      /^(\d{1,2}:\d{2}(?:\s*[AP]M)?)\s*[–\-—]\s*(\d{1,2}:\d{2}(?:\s*[AP]M)?)(\+\d)?$/i
-    );
+    // Deduplicate cards by their text content
+    const seen = new Set();
+    cards = cards.filter(el => {
+      const key = (el.innerText || '').slice(0, 60);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 
-    // Strategy 2: a line that is just a time "10:15 AM" followed by another time nearby
-    const justTime = line.match(/^(\d{1,2}:\d{2}(?:\s*[AP]M)?)$/i);
+    cards.slice(0, 10).forEach(card => {
+      try {
+        const txt = card.innerText || '';
+        const lines = txt.split('\n').map(l => l.trim()).filter(Boolean);
 
-    let depTime = '', arrTime = '';
+        // --- Price ---
+        const priceM = txt.match(/€([\d,]+)/);
+        if (!priceM) return;
+        const numPrice = parseInt(priceM[1].replace(/,/g, ''));
+        if (numPrice < 200 || numPrice > 60000) return;
 
-    if (oneLine) {
-      depTime = oneLine[1].trim();
-      arrTime = oneLine[2].trim() + (oneLine[3] || '');
-    } else if (justTime) {
-      // Look at next few lines for another time
-      for (let k = i + 1; k < Math.min(i + 4, lines.length); k++) {
-        const next = lines[k];
-        const nextTime = next.match(/^(\d{1,2}:\d{2}(?:\s*[AP]M)?)(\+\d)?$/i);
-        if (nextTime) {
-          depTime = justTime[1].trim();
-          arrTime = nextTime[1].trim() + (nextTime[2] || '');
-          break;
+        // --- Times: find all time-like strings ---
+        // Matches "10:25 AM", "10:25", "6:15 AM+1", "06:15+1"
+        const allTimes = [...txt.matchAll(/(\d{1,2}:\d{2}(?:\s*[AP]M)?)(\+\d)?/gi)]
+          .map(m => ({ time: m[1].trim(), plus: m[2] || '' }));
+        const depTime = allTimes[0] ? allTimes[0].time : '';
+        const arrTime = allTimes[1] ? allTimes[1].time + allTimes[1].plus : '';
+
+        // --- Duration ---
+        const durM = txt.match(/(\d+)\s*hr(?:s?)(?:\s+(\d+)\s*min)?/i)
+                  || txt.match(/(\d+)\s*h(?:\s*(\d+)\s*m)?/);
+        const dur = durM ? durM[1] + 'h ' + (durM[2] || '0') + 'm' : '';
+
+        // --- Stops ---
+        let stops = 0, via = '';
+        if (/nonstop/i.test(txt)) stops = 0;
+        else if (/1\s*stop/i.test(txt)) {
+          stops = 1;
+          const viaM = txt.match(/\b([A-Z]{3})\b(?=[^a-z]*layover|[^a-z]*stop)/);
+          if (viaM) via = viaM[1];
+        } else {
+          const sM = txt.match(/(\d+)\s*stops?/i);
+          if (sM) stops = parseInt(sM[1]);
         }
-      }
-    }
 
-    if (!depTime) continue;
+        // --- Layover ---
+        const layM = txt.match(/(\d+)\s*hr(?:s?)\s+(\d+)?\s*min?\s+layover/i)
+                  || txt.match(/(\d+)\s*h\s+layover/i);
+        const layoverDur = layM ? layM[1] + 'h ' + (layM[2] || '0') + 'm' : '';
 
-    // Search backwards up to 6 lines for airline
-    let airline = '';
-    for (let j = Math.max(0, i - 6); j < i; j++) {
-      const l = lines[j];
-      const known = knownAirlines.find(a => l.toLowerCase() === a.toLowerCase());
-      if (known) { airline = known; break; }
-      const partial = knownAirlines.find(a => l.toLowerCase().includes(a.toLowerCase()));
-      if (partial && !airline) airline = partial;
-    }
-    if (!airline) {
-      for (let j = Math.max(0, i - 4); j < i; j++) {
-        const l = lines[j];
-        if (
-          l.length >= 3 && l.length <= 60 && /[A-Za-z]{3}/.test(l) &&
-          !/^\d|€|\$|nonstop|direct|stop|hr|min|:\d{2}|\+\d|Economy|Business|First|Select|Book|More|Carbon|Wi-Fi|USB|Flight|Depart/i.test(l) &&
-          !/\b(ZRH|FRA|CDG|LHR|AMS|VIE|BCN|FCO|NRT|ICN|SIN|BKK|HKG|KUL|PVG|HAN|SGN|MNL|TPE|CGK)\b/.test(l)
-        ) airline = l;
-      }
-    }
+        // --- Airline: find from known list or heuristic ---
+        const knownAirlines = [
+          'Qatar Airways','Emirates','Etihad Airways','Etihad','Turkish Airlines',
+          'Singapore Airlines','Cathay Pacific','Lufthansa','Swiss','SWISS',
+          'Air France','KLM','British Airways','Finnair','Thai Airways',
+          'ANA','All Nippon Airways','JAL','Japan Airlines','Korean Air',
+          'Malaysia Airlines','Vietnam Airlines','EVA Air','China Airlines',
+          'Asiana Airlines','Asiana','Air China','China Southern','China Eastern',
+          'Garuda Indonesia','Garuda','Philippine Airlines','Oman Air','Gulf Air',
+          'Saudia','Air India','IndiGo','flydubai','Air Arabia',
+        ];
 
-    // Search forward up to 15 lines for duration, stops, price
-    let dur = '', stops = 0, via = '', layoverDur = '', numPrice = 0;
-    for (let j = i + 1; j < Math.min(i + 15, lines.length); j++) {
-      const l = lines[j];
-
-      // Duration variants: "13 hr 25 min", "13 hr", "13h 25m"
-      if (!dur) {
-        const dm = l.match(/^(\d+)\s*hr(?:s?\.?)(?:\s+(\d+)\s*min)?$/i)
-                || l.match(/^(\d+)h(?:\s*(\d+)m)?$/i);
-        if (dm) { dur = dm[1] + 'h ' + (dm[2] || '0') + 'm'; continue; }
-      }
-
-      if (/^nonstop$/i.test(l)) { stops = 0; continue; }
-      if (/^1 stop$/i.test(l)) { stops = 1; continue; }
-      const sm = l.match(/^(\d+) stops?$/i); if (sm) { stops = parseInt(sm[1]); continue; }
-
-      if (!via) {
-        const vm = l.match(/(?:stop|layover)[^A-Z]*([A-Z]{3})\b/);
-        if (vm) via = vm[1];
-        // Also try "· DXB ·" format
-        const vm2 = l.match(/·\s*([A-Z]{3})\s*·/);
-        if (vm2) via = vm2[1];
-      }
-
-      if (!layoverDur) {
-        const lm = l.match(/(\d+)\s*hr(?:s?\.?)(?:\s+(\d+)\s*min)?\s+layover/i);
-        if (lm) layoverDur = lm[1] + 'h ' + (lm[2] || '0') + 'm';
-      }
-
-      if (!numPrice) {
-        const pm = l.match(/^€\s*([\d,]+)$/) || l.match(/^([\d,]+)\s*€$/);
-        if (pm) {
-          const n = parseInt(pm[1].replace(/,/g, ''));
-          if (n >= 200 && n <= 60000) { numPrice = n; break; }
+        let airline = '';
+        // Try finding known airline in full text first
+        for (const a of knownAirlines) {
+          if (txt.includes(a)) { airline = a; break; }
         }
-      }
-    }
+        // Fallback: find a line before the first time that looks like an airline name
+        if (!airline) {
+          const timeIdx = lines.findIndex(l => /\d{1,2}:\d{2}/.test(l));
+          if (timeIdx > 0) {
+            for (let j = Math.max(0, timeIdx - 4); j < timeIdx; j++) {
+              const l = lines[j];
+              if (
+                l.length >= 3 && l.length <= 60 &&
+                /[A-Za-z]{3}/.test(l) &&
+                !/^\d|€|nonstop|direct|stop|hr|min|:\d{2}|\+\d|Economy|Business|First|Select|Book|More|Carbon|Wi-Fi|USB|Flight|Depart|Return|Arrive/i.test(l) &&
+                !/\b(ZRH|FRA|CDG|LHR|AMS|VIE|BCN|FCO|NRT|ICN|SIN|BKK|HKG|KUL|PVG|HAN|SGN|MNL|TPE|CGK)\b/.test(l)
+              ) { airline = l; }
+            }
+          }
+        }
 
-    if (!numPrice) continue;
+        if (!depTime) return; // must have at least dep time
 
-    results.push({ airline, depTime, arrTime, dur, stops, via, layoverDur, price: '€' + numPrice, numPrice });
-  }
+        results.push({ airline, depTime, arrTime, dur, stops, via, layoverDur,
+          price: '€' + numPrice, numPrice });
+      } catch(e) {}
+    });
 
-  // Deduplicate by depTime + price
-  const seen = new Set();
-  return results.filter(r => {
-    const k = r.depTime + '-' + r.numPrice;
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
+    return results;
   });
+
+  console.log('[FSX] DOM extraction found', flights.length, 'flights');
+  return flights;
 }
 
 const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -365,20 +368,18 @@ async function scrapeRoute({ from, to, depart, ret, cabin = 'Business', stay = 9
       return gridFallback(datePrices, stay, cabinOk, cabin, from, to, gridUrl);
     }
 
-    // Wait a bit more for results to load fully
+    // Wait for results to load fully
     await sleep(2000);
-    await page.evaluate(() => window.scrollBy(0, 600));
-    await sleep(1500);
 
     const resultsText = await page.evaluate(() => document.body.innerText);
-
     // LOG THE FULL RESULTS PAGE TEXT for debugging
     console.log('[FSX] === RESULTS PAGE TEXT START ===');
     console.log(resultsText.slice(0, 3000));
     console.log('[FSX] === RESULTS PAGE TEXT END ===');
 
-    let flights = parseFlightResultsFromText(resultsText);
-    console.log('[FSX] Flights parsed from results page:', flights.length);
+    // DOM-based extraction
+    let flights = await extractFlightsFromDOM(page);
+    console.log('[FSX] Flights extracted:', flights.length);
 
     if (flights.length > 0) {
       flights.sort((a, b) => a.numPrice - b.numPrice);
