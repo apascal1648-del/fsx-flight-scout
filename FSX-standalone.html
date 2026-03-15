@@ -233,7 +233,7 @@
               <div style={{fontSize:9,color:'#444',fontFamily:mono,marginTop:3,letterSpacing:1}}>ROUND TRIP</div>
             </div>
             <div style={{display:'flex',flexDirection:'column',gap:6,alignItems:'flex-end',flexShrink:0}}>
-              <a href={t.buyUrl||'#'} target="_blank" rel="noopener noreferrer"
+              <a href={`https://www.google.com/travel/flights?hl=en&curr=EUR&q=flights+from+${t.fromCode}+to+${t.toCode}+on+${t.depDate}+returning+${t.retDate}&cabinclass=${(t.cabin||'business').toLowerCase().replace(/\*/g,'').trim()}`} target="_blank" rel="noopener noreferrer"
                 style={{display:'inline-flex',alignItems:'center',gap:5,background:'linear-gradient(135deg,#c8a84b,#8a6a10)',color:'#0a0a0a',textDecoration:'none',padding:'9px 16px',borderRadius:4,fontSize:11,fontWeight:700,letterSpacing:1.5,fontFamily:mono,transition:'all .15s',whiteSpace:'nowrap'}}
                 onMouseEnter={e=>e.currentTarget.style.filter='brightness(1.15)'}
                 onMouseLeave={e=>e.currentTarget.style.filter='none'}>
