@@ -188,39 +188,56 @@ async function scrapeRoute({ from, to, depart, ret, cabin = 'Business', stay = 9
     } catch(e) { console.log('[FSX] Grid wait timeout:', e.message.slice(0, 40)); }
     await sleep(1000);
 
-    // Navigate calendar forward to reach the target departure month
+    // Navigate to target month by filling the date field directly
+    // This makes Google center the calendar grid on the departure month
     const targetDate = new Date(depart + 'T12:00:00');
     const now = new Date();
     const monthsAhead = (targetDate.getFullYear() - now.getFullYear()) * 12
                       + (targetDate.getMonth() - now.getMonth());
 
-    if (monthsAhead > 2) {
-      console.log('[FSX] Navigating calendar forward', monthsAhead - 2, 'months to reach', depart);
-      for (let m = 0; m < monthsAhead - 2; m++) {
-        try {
-          // Click the "next month" button in the date grid calendar
-          const nextBtn = page.locator('[aria-label*="Next"], [aria-label*="next"], button[jsname]')
-            .filter({ hasText: /^›$|^>$|^»$/ })
-            .or(page.locator('button[aria-label*="Next month"], button[aria-label*="next month"]'))
-            .first();
+    if (monthsAhead > 1) {
+      console.log('[FSX] Target month is', monthsAhead, 'months ahead, filling date to navigate calendar');
+      try {
+        // Click the departure date input to open the calendar
+        const dateInput = page.locator(
+          'input[placeholder*="Departure"], input[aria-label*="Departure date"], input[data-placeholder*="depart"]'
+        ).first();
 
-          if (await nextBtn.isVisible({ timeout: 1500 })) {
-            await nextBtn.click();
-            await sleep(600);
-          } else {
-            // Fallback: try clicking by position/icon
+        if (await dateInput.isVisible({ timeout: 3000 })) {
+          await dateInput.click(); await sleep(400);
+          await page.keyboard.press('Control+a');
+          // Type the departure date in MM/DD/YYYY format
+          const depD = new Date(depart + 'T12:00:00');
+          await page.keyboard.type(
+            (depD.getMonth()+1) + '/' + depD.getDate() + '/' + depD.getFullYear(),
+            { delay: 80 }
+          );
+          await page.keyboard.press('Tab'); await sleep(1500);
+          console.log('[FSX] Date entered, calendar should now show', depart);
+        } else {
+          // Fallback: click forward arrow N times
+          console.log('[FSX] Date input not found, using arrow navigation');
+          for (let m = 0; m < Math.min(monthsAhead - 1, 12); m++) {
             const buttons = await page.locator('button').all();
             for (const btn of buttons) {
               const label = (await btn.getAttribute('aria-label').catch(() => '') || '').toLowerCase();
-              const txt = (await btn.innerText().catch(() => '')).trim();
-              if (label.includes('next') || txt === '›' || txt === '>') {
-                await btn.click(); await sleep(600); break;
+              const txt   = (await btn.innerText().catch(() => '')).trim();
+              if (label.includes('next month') || label.includes('forward') || txt === '›' || txt === '>') {
+                await btn.click(); await sleep(500); break;
               }
             }
           }
-        } catch(e) { console.log('[FSX] Calendar nav error:', e.message.slice(0, 40)); break; }
-      }
-      await sleep(500);
+        }
+      } catch(e) { console.log('[FSX] Date navigation error:', e.message.slice(0, 60)); }
+
+      // Wait for new prices to load after navigation
+      try {
+        await page.waitForFunction(
+          () => (document.body.innerText.match(/€\d{3,5}/g) || []).length >= 3,
+          { timeout: 10000, polling: 800 }
+        );
+      } catch {}
+      await sleep(800);
     }
 
     const pageText = await page.evaluate(() => document.body.innerText);
