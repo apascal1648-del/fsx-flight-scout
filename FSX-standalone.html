@@ -233,7 +233,7 @@
               <div style={{fontSize:9,color:'#444',fontFamily:mono,marginTop:3,letterSpacing:1}}>ROUND TRIP</div>
             </div>
             <div style={{display:'flex',flexDirection:'column',gap:6,alignItems:'flex-end',flexShrink:0}}>
-              <a href={'https://www.google.com/travel/flights?hl=en#flt='+t.fromCode+'.'+t.toCode+'.'+t.depDate+'*'+t.toCode+'.'+t.fromCode+'.'+t.retDate+';c:EUR;e:'+(/business/i.test(t.cabin||'')?'2':/first/i.test(t.cabin||'')?'3':'1')+';sd:1;t:f'} target="_blank" rel="noopener noreferrer"
+              <a href={'https://www.google.com/travel/flights?hl=en#flt='+t.fromCode+'.'+t.toCode+'.'+t.depDate+'*'+t.toCode+'.'+t.fromCode+'.'+t.retDate+';c:EUR;e:'+(/business/i.test(t.cabin||'')?'2':/first/i.test(t.cabin||'')?'3':'1')+';s:0*1;sd:1;t:f'} target="_blank" rel="noopener noreferrer"
                 style={{display:'inline-flex',alignItems:'center',gap:5,background:'linear-gradient(135deg,#c8a84b,#8a6a10)',color:'#0a0a0a',textDecoration:'none',padding:'9px 16px',borderRadius:4,fontSize:11,fontWeight:700,letterSpacing:1.5,fontFamily:mono,transition:'all .15s',whiteSpace:'nowrap'}}
                 onMouseEnter={e=>e.currentTarget.style.filter='brightness(1.15)'}
                 onMouseLeave={e=>e.currentTarget.style.filter='none'}>
@@ -525,20 +525,21 @@
                 </select>
               </div>
               <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>STAY MIN (days)</label>
-                <input type="number" min="1" max="365" value={minDays}
-                  onChange={e=>{const v=parseInt(e.target.value)||1;setMinDays(v);if(v>maxDays)setMaxDays(v);}}
-                  style={{width:90,background:'#1a1a1a',border:'1.5px solid #2e2e2e',borderRadius:4,padding:'9px 12px',fontSize:14,fontFamily:"'DM Mono',monospace",color:'#f0ede4',outline:'none'}}
-                  onFocus={e=>e.target.style.borderColor='#c8a84b'}
-                  onBlur={e=>e.target.style.borderColor='#2e2e2e'}/>
-              </div>
-              <div style={{display:'flex',flexDirection:'column',gap:4}}>
-                <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>STAY MAX (days)</label>
-                <input type="number" min="1" max="365" value={maxDays}
-                  onChange={e=>{const v=parseInt(e.target.value)||1;setMaxDays(v);if(v<minDays)setMinDays(v);}}
-                  style={{width:90,background:'#1a1a1a',border:'1.5px solid #2e2e2e',borderRadius:4,padding:'9px 12px',fontSize:14,fontFamily:"'DM Mono',monospace",color:'#f0ede4',outline:'none'}}
-                  onFocus={e=>e.target.style.borderColor='#c8a84b'}
-                  onBlur={e=>e.target.style.borderColor='#2e2e2e'}/>
+                <label style={{fontSize:10,letterSpacing:2,color:'#666',fontFamily:"'DM Mono',monospace",textTransform:'uppercase'}}>STAY DURATION</label>
+                <select value={minDays+'-'+maxDays} onChange={e=>{const [mn,mx]=e.target.value.split('-').map(Number);setMinDays(mn);setMaxDays(mx);}}>
+                  <option value="7-7">1 week</option>
+                  <option value="10-14">10–14 days</option>
+                  <option value="14-21">2–3 weeks</option>
+                  <option value="21-30">3–4 weeks</option>
+                  <option value="30-45">1–1.5 months</option>
+                  <option value="45-60">1.5–2 months</option>
+                  <option value="60-90">2–3 months</option>
+                  <option value="75-105">2.5–3.5 months</option>
+                  <option value="90-120">3–4 months</option>
+                  <option value="120-150">4–5 months</option>
+                  <option value="150-180">5–6 months</option>
+                  <option value="180-365">6–12 months</option>
+                </select>
               </div>
               <div style={{display:'flex',flexDirection:'column',gap:6,paddingBottom:2}}>
                 <div style={{fontSize:9,color:'#333',fontFamily:"'DM Mono',monospace",textTransform:'uppercase',letterSpacing:1}}>SCAN MODE</div>
