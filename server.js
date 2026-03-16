@@ -188,6 +188,41 @@ async function scrapeRoute({ from, to, depart, ret, cabin = 'Business', stay = 9
     } catch(e) { console.log('[FSX] Grid wait timeout:', e.message.slice(0, 40)); }
     await sleep(1000);
 
+    // Navigate calendar forward to reach the target departure month
+    const targetDate = new Date(depart + 'T12:00:00');
+    const now = new Date();
+    const monthsAhead = (targetDate.getFullYear() - now.getFullYear()) * 12
+                      + (targetDate.getMonth() - now.getMonth());
+
+    if (monthsAhead > 2) {
+      console.log('[FSX] Navigating calendar forward', monthsAhead - 2, 'months to reach', depart);
+      for (let m = 0; m < monthsAhead - 2; m++) {
+        try {
+          // Click the "next month" button in the date grid calendar
+          const nextBtn = page.locator('[aria-label*="Next"], [aria-label*="next"], button[jsname]')
+            .filter({ hasText: /^›$|^>$|^»$/ })
+            .or(page.locator('button[aria-label*="Next month"], button[aria-label*="next month"]'))
+            .first();
+
+          if (await nextBtn.isVisible({ timeout: 1500 })) {
+            await nextBtn.click();
+            await sleep(600);
+          } else {
+            // Fallback: try clicking by position/icon
+            const buttons = await page.locator('button').all();
+            for (const btn of buttons) {
+              const label = (await btn.getAttribute('aria-label').catch(() => '') || '').toLowerCase();
+              const txt = (await btn.innerText().catch(() => '')).trim();
+              if (label.includes('next') || txt === '›' || txt === '>') {
+                await btn.click(); await sleep(600); break;
+              }
+            }
+          }
+        } catch(e) { console.log('[FSX] Calendar nav error:', e.message.slice(0, 40)); break; }
+      }
+      await sleep(500);
+    }
+
     const pageText = await page.evaluate(() => document.body.innerText);
     const datePrices = parseDateGrid(pageText, depart, ret);
     console.log('[FSX]', from, '->', to, '| grid prices:', datePrices.length, '| cabin:', cabinOk ? cabin : 'Economy*');
