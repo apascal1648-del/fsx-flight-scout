@@ -1,9 +1,8 @@
 /**
- * FSX Flight Scout v14-restored
- * Back to the proven working approach:
- * - Date grid scraping to find real prices in the selected window
- * - Each result has a direct Google Flights URL for that exact route/date/cabin
- * - Clicking "Google Flights" opens the exact search with full flight details
+ * FSX Flight Scout v22
+ * Root fix: fill departure date INTO the form before searching.
+ * This makes Google open the date grid centered on the target month.
+ * Works for any month - near or far.
  */
 const express = require('express');
 const cors = require('cors');
@@ -37,7 +36,7 @@ async function newPage() {
   const ctx = await b.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     locale: 'en-US',
-    timezoneId: 'Europe/Amsterdam',
+    timezoneId: 'Europe/Zurich',
     viewport: { width: 1366, height: 768 },
     extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
   });
@@ -95,13 +94,11 @@ function isoToDisp(iso) {
   return M[d.getMonth()] + ' ' + d.getDate() + ' ' + d.getFullYear();
 }
 
-// Build direct Google Flights URL for a specific date + route + cabin
 function buildGoogleFlightsUrl(from, to, depIso, retIso, cabin) {
   const e = /business/i.test(cabin) ? 2 : /first/i.test(cabin) ? 3 : 1;
-  return `https://www.google.com/travel/flights?hl=en&curr=EUR#flt=${from}.${to}.${depIso}*${to}.${from}.${retIso};c:EUR;e:${e};sd:1;t:f`;
+  return `https://www.google.com/travel/flights?hl=en#flt=${from}.${to}.${depIso}*${to}.${from}.${retIso};c:EUR;e:${e};s:0*1;sd:1;t:f`;
 }
 
-// Parse date grid from page text (proven working)
 function parseDateGrid(text, depart, ret) {
   const depDate = new Date(depart + 'T12:00:00');
   const retDate = new Date(ret + 'T12:00:00');
@@ -129,12 +126,8 @@ function parseDateGrid(text, depart, ret) {
         const price = parseInt(pm[1].replace(/,/g, ''));
         const date = new Date(currentYear, currentMonth, day);
         if (date >= depDate && date <= retDate && price > 0 && price < 60000) {
-          datePrices.push({
-            date, price, day,
-            month: currentMonth,
-            year: currentYear,
-            iso: date.toISOString().slice(0, 10)
-          });
+          datePrices.push({ date, price, day, month: currentMonth, year: currentYear,
+            iso: date.toISOString().slice(0, 10) });
         }
         i++;
       }
@@ -142,6 +135,16 @@ function parseDateGrid(text, depart, ret) {
   }
   datePrices.sort((a, b) => a.price - b.price);
   return datePrices;
+}
+
+// Type text into a field char by char with delay
+async function typeIntoField(page, locator, text) {
+  await locator.click(); await sleep(300);
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press('Delete');
+  await sleep(100);
+  for (const ch of text) await page.keyboard.type(ch, { delay: 80 });
+  await sleep(300);
 }
 
 async function scrapeRoute({ from, to, depart, ret, cabin = 'Business', stay = 90 }) {
@@ -158,28 +161,58 @@ async function scrapeRoute({ from, to, depart, ret, cabin = 'Business', stay = 9
 
     // Fill origin
     const oi = page.locator('input[placeholder*="Where from"],input[aria-label*="Where from"]').first();
-    await oi.click(); await sleep(300);
-    await page.keyboard.press('Control+a');
-    for (const ch of from) await page.keyboard.type(ch, { delay: 80 });
+    await typeIntoField(page, oi, from);
     await sleep(2000); await page.keyboard.press('ArrowDown'); await sleep(300);
     await page.keyboard.press('Enter'); await sleep(800);
 
     // Fill destination
     const di = page.locator('input[placeholder*="Where to"],input[aria-label*="Where to"]').first();
-    await di.click(); await sleep(300);
-    for (const ch of to) await page.keyboard.type(ch, { delay: 80 });
+    await typeIntoField(page, di, to);
     await sleep(2000); await page.keyboard.press('ArrowDown'); await sleep(300);
     await page.keyboard.press('Enter'); await sleep(800);
 
-    // Search without dates → shows date grid
-    await page.keyboard.press('Escape'); await sleep(300);
+    // KEY FIX: fill departure date BEFORE searching
+    // This makes Google show the date grid centered on the correct month
+    const depD = new Date(depart + 'T12:00:00');
+    const depFormatted = (depD.getMonth()+1) + '/' + depD.getDate() + '/' + depD.getFullYear();
+
+    // Try to find and fill departure date field
+    let dateFilled = false;
+    const dateSelectors = [
+      'input[placeholder*="Departure"]',
+      'input[aria-label*="Departure date"]',
+      'input[aria-label*="departure"]',
+      'input[placeholder*="departure"]',
+    ];
+    for (const sel of dateSelectors) {
+      try {
+        const el = page.locator(sel).first();
+        if (await el.isVisible({ timeout: 2000 })) {
+          await typeIntoField(page, el, depFormatted);
+          await page.keyboard.press('Escape'); await sleep(300);
+          dateFilled = true;
+          console.log('[FSX] Departure date filled via:', sel, '->', depFormatted);
+          break;
+        }
+      } catch {}
+    }
+
+    if (!dateFilled) {
+      // Fallback: just type the date after destination — focus may be on date field
+      console.log('[FSX] Date field not found by selector, typing after destination');
+      await sleep(500);
+      await page.keyboard.type(depFormatted, { delay: 80 });
+      await page.keyboard.press('Escape'); await sleep(300);
+    }
+
+    // Click Search
     try {
       const sb = page.getByRole('button', { name: /^(Search|Explore)$/i }).last();
       await sb.waitFor({ state: 'visible', timeout: 5000 });
       await sb.click();
     } catch { await page.keyboard.press('Enter'); }
 
-    // Wait for date grid prices
+    // Wait for date grid with prices
     try {
       await page.waitForFunction(
         () => (document.body.innerText.match(/€\d{3,5}/g) || []).length >= 5,
@@ -188,99 +221,101 @@ async function scrapeRoute({ from, to, depart, ret, cabin = 'Business', stay = 9
     } catch(e) { console.log('[FSX] Grid wait timeout:', e.message.slice(0, 40)); }
     await sleep(1000);
 
-    // Navigate to target month by filling the date field directly
-    // This makes Google center the calendar grid on the departure month
-    const targetDate = new Date(depart + 'T12:00:00');
-    const now = new Date();
-    const monthsAhead = (targetDate.getFullYear() - now.getFullYear()) * 12
-                      + (targetDate.getMonth() - now.getMonth());
+    let pageText = await page.evaluate(() => document.body.innerText);
+    let datePrices = parseDateGrid(pageText, depart, ret);
+    console.log('[FSX]', from, '->', to, '| grid prices found:', datePrices.length, '| target month:', depart.slice(0,7));
 
-    if (monthsAhead > 1) {
-      console.log('[FSX] Target month is', monthsAhead, 'months ahead, filling date to navigate calendar');
-      try {
-        // Click the departure date input to open the calendar
-        const dateInput = page.locator(
-          'input[placeholder*="Departure"], input[aria-label*="Departure date"], input[data-placeholder*="depart"]'
-        ).first();
+    // If still no prices, try scrolling the date grid forward using JavaScript
+    if (datePrices.length === 0) {
+      console.log('[FSX] No prices in target range, trying JS calendar navigation');
+      const targetMonth = depD.getMonth(); // 0-indexed
+      const targetYear = depD.getFullYear();
 
-        if (await dateInput.isVisible({ timeout: 3000 })) {
-          await dateInput.click(); await sleep(400);
-          await page.keyboard.press('Control+a');
-          // Type the departure date in MM/DD/YYYY format
-          const depD = new Date(depart + 'T12:00:00');
-          await page.keyboard.type(
-            (depD.getMonth()+1) + '/' + depD.getDate() + '/' + depD.getFullYear(),
-            { delay: 80 }
-          );
-          await page.keyboard.press('Tab'); await sleep(1500);
-          console.log('[FSX] Date entered, calendar should now show', depart);
-        } else {
-          // Fallback: click forward arrow N times
-          console.log('[FSX] Date input not found, using arrow navigation');
-          for (let m = 0; m < Math.min(monthsAhead - 1, 12); m++) {
-            const buttons = await page.locator('button').all();
-            for (const btn of buttons) {
-              const label = (await btn.getAttribute('aria-label').catch(() => '') || '').toLowerCase();
-              const txt   = (await btn.innerText().catch(() => '')).trim();
-              if (label.includes('next month') || label.includes('forward') || txt === '›' || txt === '>') {
-                await btn.click(); await sleep(500); break;
-              }
-            }
-          }
+      // Use JS to find and click forward arrow buttons until we reach the target month
+      let navigated = false;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        // Check if target month is now visible in page text
+        const monthNames = ['January','February','March','April','May','June',
+                            'July','August','September','October','November','December'];
+        const currentText = await page.evaluate(() => document.body.innerText);
+        if (currentText.includes(monthNames[targetMonth] + ' ' + targetYear) ||
+            currentText.includes(monthNames[targetMonth] + '\n' + targetYear)) {
+          console.log('[FSX] Target month now visible after', attempt, 'navigations');
+          navigated = true;
+          break;
         }
-      } catch(e) { console.log('[FSX] Date navigation error:', e.message.slice(0, 60)); }
 
-      // Wait for new prices to load after navigation
-      try {
-        await page.waitForFunction(
-          () => (document.body.innerText.match(/€\d{3,5}/g) || []).length >= 3,
-          { timeout: 10000, polling: 800 }
-        );
-      } catch {}
-      await sleep(800);
+        // Click any "next" arrow button visible on page
+        const clicked = await page.evaluate(() => {
+          // Try aria-label
+          const byLabel = [...document.querySelectorAll('button[aria-label]')]
+            .find(b => /next|forward|›|>/i.test(b.getAttribute('aria-label') || ''));
+          if (byLabel) { byLabel.click(); return 'aria-label'; }
+
+          // Try by button text content
+          const byText = [...document.querySelectorAll('button')]
+            .find(b => {
+              const t = (b.innerText || '').trim();
+              return t === '›' || t === '>' || t === '»' || t === '▶';
+            });
+          if (byText) { byText.click(); return 'text'; }
+
+          // Try SVG arrow buttons (Google often uses these)
+          const svgBtns = [...document.querySelectorAll('button')]
+            .filter(b => b.querySelector('svg') && b.getBoundingClientRect().x > window.innerWidth / 2);
+          // Take the rightmost button in the calendar area (likely "next")
+          const rightmost = svgBtns.sort((a,b) =>
+            b.getBoundingClientRect().x - a.getBoundingClientRect().x)[0];
+          if (rightmost) { rightmost.click(); return 'svg-rightmost'; }
+
+          return null;
+        });
+
+        if (!clicked) { console.log('[FSX] No next button found on attempt', attempt); break; }
+        console.log('[FSX] Clicked next via:', clicked);
+        await sleep(600);
+      }
+
+      if (navigated || true) {
+        pageText = await page.evaluate(() => document.body.innerText);
+        datePrices = parseDateGrid(pageText, depart, ret);
+        console.log('[FSX] After navigation:', datePrices.length, 'prices found');
+      }
     }
 
-    const pageText = await page.evaluate(() => document.body.innerText);
-    const datePrices = parseDateGrid(pageText, depart, ret);
-    console.log('[FSX]', from, '->', to, '| grid prices:', datePrices.length, '| cabin:', cabinOk ? cabin : 'Economy*');
-
-    if (!datePrices.length) return [];
+    if (!datePrices.length) {
+      console.log('[FSX] No prices found. Page sample:', 
+        (await page.evaluate(() => document.body.innerText)).slice(0, 300).replace(/\n/g,'|'));
+      return [];
+    }
 
     const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-    // Return top 5 prices, each with a direct Google Flights URL
     return datePrices.slice(0, 5).map((dp, idx) => {
       const retDate = new Date(dp.date.getTime() + stay * 86400000);
       const retIso = retDate.toISOString().slice(0, 10);
       const depStr = M[dp.month] + ' ' + dp.day + ' ' + dp.year;
       const retStr = M[retDate.getMonth()] + ' ' + retDate.getDate() + ' ' + retDate.getFullYear();
-
-      // Direct Google Flights URL — opens exact route/date/cabin
       const buyUrl = buildGoogleFlightsUrl(from, to, dp.iso, retIso, cabinOk ? cabin : 'Economy');
-
       return {
         from, to, fromCode: from, toCode: to,
         airline: '', dur: '', stops: 0, via: '', layoverDur: '',
-        price: '€' + dp.price,
-        numPrice: dp.price,
-        dep: depStr,
-        ret: retStr,
-        depDate: dp.iso,
-        retDate: retIso,
+        price: '€' + dp.price, numPrice: dp.price,
+        dep: depStr, ret: retStr,
+        depDate: dp.iso, retDate: retIso,
         stayLabel: stay + 'd',
         cabin: cabinOk ? cabin : 'Economy*',
-        real: true,
-        best: idx === 0,
-        buyUrl,
+        real: true, best: idx === 0, buyUrl,
       };
     });
 
+  } catch(e) {
+    console.log('[FSX] scrapeRoute error:', e.message);
+    return [];
   } finally {
     await page.context().close().catch(() => {});
   }
 }
 
-// ── Routes ──────────────────────────────────────────────────────────────────
 const EU_HUBS = [
   {code:'ZRH',name:'Zurich'},{code:'FRA',name:'Frankfurt'},{code:'CDG',name:'Paris'},
   {code:'LHR',name:'London'},{code:'AMS',name:'Amsterdam'},{code:'VIE',name:'Vienna'},
@@ -293,7 +328,7 @@ const AS_AIRPORTS = [
   {code:'MNL',name:'Manila'},{code:'TPE',name:'Taipei'},{code:'CGK',name:'Jakarta'}
 ];
 
-app.get('/health', (req, res) => res.json({ status: 'FSX scraper online', version: '14-restored' }));
+app.get('/health', (req, res) => res.json({ status: 'FSX scraper online', version: '22.0' }));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'FSX-standalone.html')));
 
 app.get('/scrape', async (req, res) => {
@@ -332,4 +367,4 @@ app.get('/scan', async (req, res) => {
   res.json({ ok: true, count: all.length, results: all.slice(0, 50) });
 });
 
-app.listen(PORT, () => console.log('[FSX] Server v14-restored on port', PORT));
+app.listen(PORT, () => console.log('[FSX] Server v22 on port', PORT));
