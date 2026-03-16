@@ -423,7 +423,7 @@
           if(!bestPerRoute[k]||t.numPrice<bestPerRoute[k].numPrice) bestPerRoute[k]=t;
         });
         const top = Object.values(bestPerRoute).sort((a,b)=>(a.numPrice||0)-(b.numPrice||0)).slice(0,50);
-        if(top.length>0) top[0].best=true;
+        top.forEach((t,i)=>{ t.best = i===0; });
         setTickets(top);
         setLast(new Date());
         addLog('✓ '+top.length+' deals found ('+results.length+' total prices scanned)','sys');
