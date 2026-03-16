@@ -170,7 +170,29 @@
     return str.replace(/\s+\d{1,2}:\d{2}(?:\s*[AP]M)?/i, '').trim();
   }
 
-  function Card({ t, i }) {
+  // Build Google Flights tfs parameter (protobuf base64)
+  // This is the format Google now uses - #flt= is deprecated
+  function buildGFTfs(from, to, depDate, retDate, cabin) {
+    const cabinCode = /business/i.test(cabin||'') ? 3 : /first/i.test(cabin||'') ? 4 : 1;
+    function leg(date, f, t) {
+      const d  = [...date].map(c => c.charCodeAt(0));
+      const fa = [...f].map(c => c.charCodeAt(0));
+      const ta = [...t].map(c => c.charCodeAt(0));
+      const content = [0x12, 0x0a, ...d,
+                       0x6a, 0x07, 0x08, 0x01, 0x12, 0x03, ...fa,
+                       0x72, 0x07, 0x08, 0x01, 0x12, 0x03, ...ta];
+      return [0x1a, content.length, ...content];
+    }
+    const bytes = [0x08, 0x1c, 0x10, 0x02,
+      ...leg(depDate, from, to),
+      ...leg(retDate, to, from),
+      0x42, 0x01, 0x01,
+      0x48, 0x01,
+      0x70, 0x01,
+      0x98, 0x01, 0x01,
+      0xc8, 0x01, cabinCode];
+    return btoa(String.fromCharCode(...bytes));
+  }
     const mono = "'DM Mono',monospace";
     const serif = "'Playfair Display',serif";
     return (
@@ -233,7 +255,7 @@
               <div style={{fontSize:9,color:'#444',fontFamily:mono,marginTop:3,letterSpacing:1}}>ROUND TRIP</div>
             </div>
             <div style={{display:'flex',flexDirection:'column',gap:6,alignItems:'flex-end',flexShrink:0}}>
-              <a href={'https://www.google.com/travel/flights?hl=en#flt='+t.fromCode+'.'+t.toCode+'.'+t.depDate+'*'+t.toCode+'.'+t.fromCode+'.'+t.retDate+';c:EUR;e:'+(/business/i.test(t.cabin||'')?'2':/first/i.test(t.cabin||'')?'3':'1')+';s:0*1;sd:1;t:f'} target="_blank" rel="noopener noreferrer"
+              <a href={'https://www.google.com/travel/flights?hl=en&curr=EUR&tfs='+buildGFTfs(t.fromCode,t.toCode,t.depDate,t.retDate,t.cabin)+'&tfu=EgIIAQ'} target="_blank" rel="noopener noreferrer"
                 style={{display:'inline-flex',alignItems:'center',gap:5,background:'linear-gradient(135deg,#c8a84b,#8a6a10)',color:'#0a0a0a',textDecoration:'none',padding:'9px 16px',borderRadius:4,fontSize:11,fontWeight:700,letterSpacing:1.5,fontFamily:mono,transition:'all .15s',whiteSpace:'nowrap'}}
                 onMouseEnter={e=>e.currentTarget.style.filter='brightness(1.15)'}
                 onMouseLeave={e=>e.currentTarget.style.filter='none'}>
@@ -496,7 +518,7 @@
                       onMouseEnter={e=>e.currentTarget.style.background='rgba(0,157,224,.12)'}
                       onMouseLeave={e=>e.currentTarget.style.background='rgba(0,157,224,.06)'}>✦ Skyscanner</a>
                     {destsToShow.length<=3 && destsToShow.map(dst=>(
-                      <a key={dst.code} href={`https://www.google.com/travel/flights?hl=en&curr=EUR#flt=${hub.code}.${dst.code}.${depIso}*${dst.code}.${hub.code}.${retIso};c:EUR;e:${cabinClass==='Economy'?1:cabinClass==='First'?3:2};s:0*1;sd:1;t:f`}
+                      <a key={dst.code} href={'https://www.google.com/travel/flights?hl=en&curr=EUR&tfs='+buildGFTfs(hub.code,dst.code,depIso,retIso,cabinClass)+'&tfu=EgIIAQ'}
                         target="_blank" rel="noopener noreferrer"
                         style={{display:'inline-flex',alignItems:'center',gap:4,background:'rgba(200,168,75,.06)',border:'1px solid rgba(200,168,75,.2)',color:'#c8a84b',textDecoration:'none',padding:'3px 10px',borderRadius:3,fontSize:10,fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap'}}
                         onMouseEnter={e=>e.currentTarget.style.background='rgba(200,168,75,.12)'}
